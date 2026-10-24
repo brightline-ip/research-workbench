@@ -1,0 +1,79 @@
+# Research Verification Workbench: PostgreSQL + application.
+#
+#   cp .env.example .env      # then set OPENAI_API_KEY and POSTGRES_PASSWORD
+#   docker compose up -d --build
+#   open http://127.0.0.1:3080
+#
+# The database has no published port and sits on an internal-only network. The application port
+# is published on 127.0.0.1 only: the workbench has no user login and must not be reachable from
+# other machines. Migrations run every time the application container starts (they are
+# idempotent and serialized by an advisory lock).
+name: research-workbench
+
+services:
+  db:
+    image: postgres:16@sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: research_workbench
+      POSTGRES_USER: workbench
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [backend]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U workbench -d research_workbench"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    security_opt: ["no-new-privileges:true"]
+    mem_limit: 2g
+    pids_limit: 256
+
+  app:
+    build: .
+    image: research-workbench:0.1.0
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      # Connection settings for the bundled database; these override any DATABASE_URL in .env.
+      DATABASE_URL: ""
+      PGHOST: db
+      PGPORT: "5432"
+      PGDATABASE: research_workbench
+      PGUSER: workbench
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      HOST: 0.0.0.0
+      ALLOW_NONLOOPBACK_BIND: "1"
+      PORT: "3080"
+      SOURCE_STORAGE_ROOT: /data/sources
+      PROJECT_STORAGE_ROOT: /data/projects
+      WORKBENCH_DATA_DIR: /data
+    command: ["sh", "-c", "node scripts/migrate.js && exec node src/server.js"]
+    ports:
+      - "127.0.0.1:${WORKBENCH_PORT:-3080}:3080"
+    volumes:
+      - workbench-data:/data
+    networks: [backend, egress]
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    pids_limit: 128
+    mem_limit: 2g
+    # Immutable root filesystem; only /tmp (in memory) and the workbench-data volume are writable.
+    read_only: true
+    tmpfs:
+      - /tmp
+
+networks:
+  backend:
+    internal: true
+  egress: {}
+
+volumes:
+  pgdata:
+  workbench-data:

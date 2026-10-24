@@ -1,0 +1,17 @@
+Research Verification Workbench
+Copyright 2026 Brightline IP
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+Third-party components and terms:
+- node-postgres (pg) and its dependencies: MIT License, installed from npm (see package-lock.json).
+- pypdf (BSD-3-Clause) and XlsxWriter (BSD-2-Clause): installed from PyPI by the user or the
+  Docker build (see requirements-documents.txt).
+- python-docx (MIT) and ReportLab (BSD): installed from Debian packages in the Docker image or
+  from PyPI by the user.
+- Docker base images node:24-bookworm-slim and postgres:16 are pulled by the user and carry their
+  own licenses.
+- The OpenAI API and any n8n instance or Get Files service you connect are third-party or separately
+  licensed services governed by their own terms. Downloaded source documents remain subject to the
+  copyright and terms of use of their publishers.
+None of these components is distributed in this repository.

@@ -1,0 +1,42 @@
+import fs from 'node:fs/promises';
+import http from 'node:http';
+import os from 'node:os';
+import path from 'node:path';
+import pg from 'pg';
+import { loadConfig } from '../src/config.js';
+import { Repository } from '../src/repository.js';
+import { acquireSource } from '../src/source-acquisition.js';
+import { VerificationService } from '../src/verification.js';
+import { AnalysisService } from '../src/analysis.js';
+import { ExportService } from '../src/exports.js';
+
+const config=loadConfig();const pool=new pg.Pool(config.databaseUrl?{connectionString:config.databaseUrl}:config.pg);const repository=new Repository(pool);
+const storageRoot=await fs.mkdtemp(path.join(os.tmpdir(),'rw-verification-'));let project;let sourceId;
+const authorityText=`Official report\n\nThe measured rate was 42 percent in 2025.\n\nThe program applies to participating agencies only.\n\nThe board rejected the proposed expansion.`;
+const server=http.createServer((_req,res)=>{res.writeHead(200,{'content-type':'text/plain'});res.end(authorityText)});await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+try{
+  project=await repository.createProject({title:'Verification integration',topic:'Controlled taxonomy'});
+  const claims=['The measured rate was 42 percent in 2025.','The program applies to every agency.','The board approved the proposed expansion.','The report states the rate was 42 percent on page 99.','An unrelated unsupported proposition is true.','An inaccessible authority establishes another proposition.'];
+  const markdown=claims.join('\n\n');const version=await repository.saveCheckpoint(project.project_id,{title:'Controlled verification article',content_markdown:markdown});
+  const extraction=await repository.extractAssertions(project.project_id,version.article_version_id,{extractAssertions:async()=>({coverage_complete:true,coverage_notes:'All controlled paragraphs examined.',assertions:claims.map((claim,i)=>({block_index:i,evidence_span:claim,assertion_text:claim,normalized_proposition:claim.toLowerCase(),assertion_class:i===0?'QUANTITATIVE':'UNSOURCED_ASSERTION',load_bearing:i<3,load_bearing_reason:i<3?'Controlled central proposition.':null,citation_as_written:i===3?'Official Report, p. 99':null,source_required:true,primary_source_required:true}))})},'CONTROLLED_TEST');
+  const source=await repository.registerSource(project.project_id,{canonical_url:`http://127.0.0.1:${server.address().port}/official`,title:'Official report',source_type:'AGENCY_DOCUMENT'});sourceId=source.source_id;
+  await repository.acquireRegisteredSource(project.project_id,source.source_id,(url,options)=>acquireSource(url,{...options,allowPrivate:true}),storageRoot);
+  for(const assertion of extraction.assertions.slice(0,4)) await repository.registerSource(project.project_id,{canonical_url:source.canonical_url,title:source.title,source_type:'AGENCY_DOCUMENT',assertion_id:assertion.assertion_id,relationship_type:'SUPPORTS',proposition_source_class:'PRIMARY',classification_reason:'Controlled direct authority.'});
+  const inaccessible=await repository.registerSource(project.project_id,{canonical_url:'http://127.0.0.1:9/unavailable',title:'Unavailable authority',source_type:'AGENCY_DOCUMENT',assertion_id:extraction.assertions[5].assertion_id,relationship_type:'SUPPORTS',proposition_source_class:'PRIMARY',classification_reason:'Candidate primary authority.'});
+  await repository.acquireRegisteredSource(project.project_id,inaccessible.source_id,acquireSource,storageRoot).catch(()=>{});
+  const verifier={verifyAssertion:async({assertion,candidate_passages})=>{const p=candidate_passages[0];const base={source_id:p.source_id,passage_id:p.passage_id,assertion_as_made:assertion.assertion_text,extracted_passage:p.passage_text,confidence:0.98,provider_response_id:'controlled'};
+    if(assertion.assertion_text.includes('42 percent in 2025'))return{...base,source_actually_establishes:'The measured rate was 42 percent in 2025.',material_gap:'None.',status:'VERIFIED',defect_codes:[],recommended_remediation:'No change required.'};
+    if(assertion.assertion_text.includes('every agency'))return{...base,source_actually_establishes:'The program applies only to participating agencies.',material_gap:'The assertion omits the participation limitation.',status:'OVERSTATED',defect_codes:['OMITTED_QUALIFICATION'],recommended_remediation:'Replace every agency with participating agencies.'};
+    if(assertion.assertion_text.includes('approved'))return{...base,source_actually_establishes:'The board rejected the expansion.',material_gap:'The source states the opposite outcome.',status:'CONTRADICTED',defect_codes:[],recommended_remediation:'Correct approved to rejected.'};
+    return{...base,source_actually_establishes:'The report contains the rate but the asserted pin cite is not established.',material_gap:'The citation locator is wrong.',status:'MISCITED',defect_codes:['WRONG_PIN_CITE'],recommended_remediation:'Use the stored normalized-text locator.'};
+  }};
+  const service=new VerificationService(pool,verifier,storageRoot,'CONTROLLED_TEST');const output=await service.run(project.project_id,version.article_version_id,'AUTHOR_CORPUS');
+  const statuses=Object.fromEntries(output.results.map(r=>[r.status,(output.run.status_counts[r.status]||0)]));const workspace=await repository.getWorkspace(project.project_id);
+  const required=['VERIFIED','OVERSTATED','MISCITED','CONTRADICTED','UNSUPPORTED','UNVERIFIABLE'];
+  const revision=await repository.reviseArticle(project.project_id,version.article_version_id,output.run.verification_run_id,'Apply controlled corrections.',{reviseArticle:async input=>({title:'Controlled verification article - revised',content_markdown:markdown.replace('every agency','participating agencies').replace('approved','rejected'),change_summary:'Applied verified scope and outcome corrections.',applied_verification_result_ids:input.verification_results.filter(r=>['OVERSTATED','CONTRADICTED'].includes(r.status)).map(r=>r.verification_result_id),provider_response_id:'controlled-revision'})},'CONTROLLED_TEST');
+  const revisedWorkspace=await repository.getWorkspace(project.project_id);const analysis=new AnalysisService(pool);const dataset=await analysis.createDataset(project.project_id,{title:'Controlled outcomes',records:[{year:2024,outcome:'A',value:10},{year:2025,outcome:'B',value:20},{year:2025,outcome:'B',value:30}],source_ids:[source.source_id]});const analysisRun=await analysis.run(project.project_id,dataset.dataset_id,{instruction:'Percentage with outcome B',operation:'PERCENTAGE',parameters:{field:'outcome',equals:'B'}});
+  const exporter=new ExportService(pool,{projectStorageRoot:storageRoot});const csv=await exporter.generate(project.project_id,{article_version_id:version.article_version_id,verification_run_id:output.run.verification_run_id,format:'csv'});const csvExists=Boolean((await fs.stat(csv.output_path)).size);
+  const valid=required.every(s=>statuses[s]===1)&&output.run.assertions_attempted===6&&output.run.assertions_not_attempted===0&&workspace.verification_results.length===6&&output.results.filter(r=>['VERIFIED','OVERSTATED','MISCITED','CONTRADICTED'].includes(r.status)).every(r=>r.pin_cite&&r.extracted_passage)&&revision.version.version_number===2&&revisedWorkspace.assertions.length===0&&analysisRun.result_data.percentage===2/3&&csvExists;
+  if(!valid)throw new Error(`Verification invariants failed: ${JSON.stringify({statuses,run:output.run})}`);
+  console.log(JSON.stringify({status:'FULL_SYNTHETIC_FLOW_OK',taxonomy:statuses,coverage:`${output.run.assertions_attempted}/${output.run.assertions_extracted}`,exact_passages_and_pin_cites:true,workspace_reload:true,revision_created_version:revision.version.version_number,changed_version_requires_extraction:revisedWorkspace.assertions.length===0,deterministic_analysis_percentage:analysisRun.result_data.percentage,csv_export:true}));
+}finally{if(project)await pool.query('DELETE FROM projects WHERE project_id=$1',[project.project_id]).catch(()=>{});if(sourceId)await pool.query('DELETE FROM sources WHERE source_id=$1',[sourceId]).catch(()=>{});await pool.query("DELETE FROM sources WHERE canonical_url='http://127.0.0.1:9/unavailable'").catch(()=>{});await pool.end();await new Promise(resolve=>server.close(resolve));await fs.rm(storageRoot,{recursive:true,force:true});}

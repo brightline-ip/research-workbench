@@ -1,0 +1,120 @@
+import { buildReport, needsAttention } from './report-model.js';
+const $=selector=>document.querySelector(selector);let currentId=null,currentArticleVersionId=null,currentVerificationRunId=null,currentWorkspace=null,toastTimer;
+const revisionPendingProjects=new Set();
+function toast(message,error=false){const node=$('#toast');node.textContent=message;node.className=error?'show error':'show';clearTimeout(toastTimer);toastTimer=setTimeout(()=>node.className='',4200)}
+// When the server runs with WORKBENCH_TOKEN, ask for it once, exchange it for an HttpOnly session cookie, and retry.
+let tokenPrompt=null;
+async function authedFetch(url,options){
+  let response=await fetch(url,options);
+  if(response.status!==401)return response;
+  tokenPrompt??=(async()=>{const token=prompt('This workbench requires an access token (WORKBENCH_TOKEN):');if(!token)return false;const session=await fetch('/api/session',{method:'POST',headers:{authorization:`Bearer ${token.trim()}`}});return session.ok})().finally(()=>{tokenPrompt=null});
+  if(await tokenPrompt)response=await fetch(url,options);
+  return response;
+}
+async function api(url,options={}){
+  let pending,key;
+  if(options.method==='POST'){
+    const hash=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(url+'\n'+(options.body||'')));
+    pending='rw-pending:'+Array.from(new Uint8Array(hash),b=>b.toString(16).padStart(2,'0')).join('');
+    key=sessionStorage.getItem(pending)||crypto.randomUUID();sessionStorage.setItem(pending,key);
+  }
+  const response=await authedFetch(url,{...options,headers:{'content-type':'application/json',...(key?{'idempotency-key':key}:{}),...options.headers}});
+  const body=await response.json();
+  if(pending)sessionStorage.removeItem(pending);
+  if(!response.ok)throw new Error(body.error||'Request failed');return body;
+}
+async function withButton(button,working,task){const original=button.textContent;button.disabled=true;button.textContent=working;try{return await task()}catch(error){toast(error.message,true);throw error}finally{button.disabled=false;button.textContent=original}}
+async function readiness(){try{const result=await api('/api/readiness');const blocked=result.checks.filter(item=>!['READY'].includes(item.status)&&item.name!=='xlsx_exports');const node=$('#system-status');node.classList.toggle('ready',!blocked.length);node.lastChild.textContent=blocked.length?' Setup attention needed':` System ready${result.usage?` · ${result.usage.calls}/${result.usage.daily_call_limit} AI calls today`:''}`}catch{$('#system-status').lastChild.textContent=' System unavailable'}}
+async function refreshProjects(){const projects=await api('/api/projects');$('#projects').innerHTML='';for(const project of projects){const button=document.createElement('button');button.textContent=project.title+(project.version_number?` · v${project.version_number}`:'');button.classList.toggle('active',project.project_id===currentId);button.onclick=()=>openProject(project.project_id);$('#projects').append(button)}}
+function workflow(workspace){const states=[Boolean(workspace.articles[0]),workspace.assertion_extraction?.status==='COMPLETE',workspace.corpus_snapshot?.status==='SEALED'&&workspace.corpus_snapshot?.evidence_schema_version===2,workspace.verification_run?.status==='COMPLETE'];const ids=['intake','extract','discover','verify'];ids.forEach((id,index)=>{const node=$(`#step-${id}`);node.classList.toggle('complete',states[index]);node.classList.toggle('current',!states[index]&&states.slice(0,index).every(Boolean));const state=node.querySelector('.step-state');if(state)state.textContent=states[index]?'Complete':'Waiting'});$('#extract').disabled=!states[0];$('#discover').disabled=!states[1];$('#verify').disabled=!states[2];$('#export').disabled=!states[3];$('#adversarial').disabled=!states[3];$('#workflow-progress').textContent=`${states.filter(Boolean).length} of 4 complete`}
+function renderAssertions(items=[],results=[]){
+ const report=buildReport(items,results),target=$('#assertions');target.replaceChildren();
+ const filter=$('#findings-filter').value;
+ const rows=report.rows.filter(row=>filter==='all'||(filter==='attention'?needsAttention(row.result)||!row.result:filter==='not_applicable'?row.result?.status==='NOT_APPLICABLE':row.result?.status==='VERIFIED'));
+ $('#report-summary').textContent=`${report.counts.attention} need attention · ${report.counts.verified} verified · ${report.counts.not_applicable} need no external check · ${report.counts.pending} pending. No external check does not mean verified.`;
+ $('#legacy-note').hidden=!report.counts.legacy_adjusted;
+ $('#legacy-note').textContent=`${report.counts.legacy_adjusted} historical unsupported labels were excluded from attention because their claim classification requested no source. Original results remain stored and visible in the full ledger.`;
+ if(!rows.length){target.append(Object.assign(document.createElement('p'),{className:'empty-state',textContent:items.length?'No findings in this view. Choose Full ledger to see every statement.':'Findings will appear after claim extraction.'}));return}
+ let shown=0;const more=Object.assign(document.createElement('button'),{className:'secondary',textContent:'Show more'});
+ function appendPage(){more.remove();for(const {assertion,result} of rows.slice(shown,shown+25)){
+  const card=document.createElement('article');card.className=`assertion${assertion.load_bearing?' load-bearing':''}${result?.status==='VERIFIED'?' verified':needsAttention(result)?' defective':''}`;
+  const meta=document.createElement('div');meta.className='meta';meta.textContent=`${assertion.assertion_class} · ${result?.status==='NOT_APPLICABLE'?'NO EXTERNAL CHECK REQUIRED':result?.status||'NOT VERIFIED'}${assertion.load_bearing?' · LOAD-BEARING':''}`;
+  const claim=document.createElement('div');claim.textContent=assertion.assertion_text;card.append(meta,claim);
+  if(result?.extracted_passage){const evidence=document.createElement('div');evidence.className='evidence';evidence.textContent=`${result.source_title||'Source'} · ${result.pin_cite||'locator unavailable'}: “${result.extracted_passage}”`;card.append(evidence)}
+  if(result?.material_gap){const gap=document.createElement('div');gap.className='span';gap.textContent=`Material gap: ${result.material_gap}`;card.append(gap)}
+  if(result?.recommended_remediation){const fix=document.createElement('div');fix.className='remediation';fix.textContent=result.recommended_remediation;card.append(fix)}
+  if(result?.original_status){const old=document.createElement('div');old.className='span';old.textContent=`Original saved status: ${result.original_status}. Display adjusted using the recorded source requirement.`;card.append(old)}
+  target.append(card);
+ }shown=Math.min(shown+25,rows.length);if(shown<rows.length){more.textContent=`Show next ${Math.min(25,rows.length-shown)} (${rows.length-shown} remaining)`;target.append(more)}}
+ more.onclick=appendPage;appendPage();
+}
+function renderSources(items=[]){const target=$('#sources');target.innerHTML='';if(!items.length){target.innerHTML='<div class="empty-state">Sources will appear after the corpus is built.</div>';return}for(const source of items){const card=document.createElement('article');card.className='source';const meta=document.createElement('div');meta.className='meta';meta.textContent=`${source.authority_tier||source.source_type} · ${source.retrieval_status} · ${source.freshness_status||'UNCHECKED'}`;const title=document.createElement('strong');title.textContent=source.title||source.canonical_url;const url=document.createElement('a');url.className='url';url.href=source.canonical_url;url.target='_blank';url.rel='noopener';url.textContent=source.canonical_url;card.append(meta,title,url);if(source.provenance?.normalization_error){const note=document.createElement('p');note.className='remediation';note.textContent=source.provenance.normalization_error;card.append(note)}if(['NORMALIZED','ACQUIRED'].includes(source.retrieval_status)){const links=document.createElement('div');links.className='file-links';if(source.original_storage_path)links.append(Object.assign(document.createElement('a'),{href:`/api/projects/${currentId}/sources/${source.source_id}/original`,target:'_blank',textContent:'Download original'}));if(source.normalized_storage_path)links.append(Object.assign(document.createElement('a'),{href:`/api/projects/${currentId}/sources/${source.source_id}/normalized`,target:'_blank',textContent:'Download text'}));card.append(links)}target.append(card)}}
+function renderArtifacts(items=[]){const target=$('#artifacts');target.innerHTML='';if(!items.length){target.innerHTML='<div class="empty-state">Exported reports will appear here.</div>';return}for(const artifact of items){const link=document.createElement('a');link.className='artifact-link';link.href=`/api/projects/${currentId}/artifacts/${artifact.artifact_id}/download`;link.textContent=`Download ${artifact.title}`;target.append(link)}}
+function populateAssertionPicker(items=[]){const select=$('#source-assertion');select.innerHTML='<option value="">Background source</option>';for(const assertion of items){const option=document.createElement('option');option.value=assertion.assertion_id;option.textContent=`${assertion.load_bearing?'★ ':''}${assertion.assertion_text.slice(0,90)}`;select.append(option)}}
+async function openProject(id){currentId=id;location.hash=id;const workspace=await api(`/api/projects/${id}`);currentWorkspace=workspace;const latest=workspace.articles[0];currentArticleVersionId=latest?.article_version_id||null;currentVerificationRunId=workspace.verification_run?.verification_run_id||null;$('#empty').hidden=true;$('#active').hidden=false;$('#project-name').textContent=workspace.project.title;$('#article-title').value=latest?.title||'';$('#article').value=latest?.content_markdown||'';$('#import-coverage').textContent=(latest?.import_metadata?.warnings||[]).join(' ');$('#version').textContent=latest?`Article version ${latest.version_number} · immutable`:'No article saved';$('#coverage').textContent=workspace.verification_run?`${workspace.verification_run.assertions_attempted} of ${workspace.verification_run.assertions_extracted} claims attempted · ${workspace.verification_run.status}`:workspace.assertion_extraction?`${workspace.assertions.length} atomic claims · extraction ${workspace.assertion_extraction.coverage_complete?'complete':'incomplete'}`:'No claim ledger yet.';if(workspace.verification_run&&!workspace.verification_run.corpus_snapshot_id)$('#coverage').textContent+=' · Legacy run: evidence was not frozen';$('#corpus-status').textContent=workspace.corpus_snapshot?`${workspace.corpus_snapshot.evidence_schema_version===2?'Sealed evidence':'Legacy manifest (rebuild required)'} · ${workspace.corpus_snapshot.source_count} source versions · fingerprint ${workspace.corpus_snapshot.manifest_hash.slice(0,12)}…`:'No sealed corpus yet.';const adversarial=$('#adversarial-status');adversarial.hidden=!workspace.reconciliation_run;if(workspace.reconciliation_run)adversarial.textContent=`Adversarial reconciliation · ${workspace.reconciliation_run.overall_disposition} · ${workspace.reconciliation_run.status}`;const report=buildReport(workspace.assertions,workspace.verification_results);const verified=report.counts.verified;$('#metric-claims').textContent=workspace.assertions.length||'—';$('#metric-verified').textContent=workspace.verification_run?verified:'—';$('#metric-defective').textContent=workspace.verification_run?report.counts.attention:'—';$('#metric-sources').textContent=workspace.sources.length||'—';workflow(workspace);renderRevision(workspace);renderAssertions(workspace.assertions,workspace.verification_results);renderSources(workspace.sources);renderArtifacts(workspace.artifacts);populateAssertionPicker(workspace.assertions);await refreshProjects()}
+function showProjectDialog(){const dialog=$('#project-dialog');dialog.showModal();setTimeout(()=>$('#project-title').focus(),50)}
+$('#new-project').onclick=showProjectDialog;$('#welcome-new').onclick=showProjectDialog;$('#cancel').onclick=()=>$('#project-dialog').close();
+$('#project-form').onsubmit=async event=>{event.preventDefault();const button=event.submitter;await withButton(button,'Creating…',async()=>{const project=await api('/api/projects',{method:'POST',body:JSON.stringify({title:$('#project-title').value,topic:$('#project-topic').value})});$('#project-dialog').close();event.target.reset();await openProject(project.project_id);toast('Project created. Add your article to begin.')})};
+$('#save').onclick=()=>withButton($('#save'),'Saving…',async()=>{if(!currentId)throw new Error('Create or select a project first.');await api(`/api/projects/${currentId}/checkpoint`,{method:'POST',body:JSON.stringify({title:$('#article-title').value,content_markdown:$('#article').value,change_summary:'Operator checkpoint'})});await openProject(currentId);toast('Immutable article checkpoint saved.')});
+$('#import-file').onclick=()=>withButton($('#import-file'),'Importing…',async()=>{const file=$('#article-file').files[0];if(!currentId)throw new Error('Create or select a project first.');if(!file)throw new Error('Choose a DOCX, PDF, Markdown, or text file.');const response=await authedFetch(`/api/projects/${currentId}/import?filename=${encodeURIComponent(file.name)}`,{method:'POST',headers:{'content-type':'application/octet-stream'},body:file});const result=await response.json();if(!response.ok)throw new Error(result.error||'Import failed');$('#article-file').value='';await openProject(currentId);toast(`${file.name} imported and saved as a new article version.`)});
+$('#extract').onclick=()=>withButton($('#extract'),'Extracting…',async()=>{await api(`/api/projects/${currentId}/assertions`,{method:'POST',body:JSON.stringify({article_version_id:currentArticleVersionId})});await openProject(currentId);toast('Atomic claim ledger created. Review it or build the corpus.')});
+$('#discover').onclick=()=>withButton($('#discover'),'Estimating…',async()=>{const estimate=await api(`/api/projects/${currentId}/discovery-estimate`,{method:'POST',body:JSON.stringify({article_version_id:currentArticleVersionId})});const approved=confirm(`Corpus preflight estimate\n\n${estimate.assertions_requiring_sources} source-dependent claims\n${estimate.planned_groups} related claim groups\nUp to ${estimate.max_external_queries} external searches\nApproximate discovery cost: $${estimate.estimated_cost_usd_low.toFixed(2)}–$${estimate.estimated_cost_usd_high.toFixed(2)}\nApproximate runtime: ${estimate.estimated_runtime_minutes_low}–${estimate.estimated_runtime_minutes_high} minutes\nModel: ${estimate.model}\n\nWarehouse reuse may reduce both cost and time. Continue?`);if(!approved){toast('Corpus build cancelled before any discovery usage.');return}const button=$('#discover');button.textContent='Building…';await api(`/api/projects/${currentId}/discover`,{method:'POST',body:JSON.stringify({article_version_id:currentArticleVersionId})});await openProject(currentId);toast('Evidence corpus acquired and sealed.')});
+$('#verify').onclick=()=>withButton($('#verify'),'Verifying…',async()=>{await api(`/api/projects/${currentId}/verify`,{method:'POST',body:JSON.stringify({article_version_id:currentArticleVersionId,mode:'AUTHOR_CORPUS'})});await openProject(currentId);toast('Verification complete. Findings are ready.')});
+$('#adversarial').onclick=()=>withButton($('#adversarial'),'Running review…',async()=>{await api(`/api/projects/${currentId}/adversarial`,{method:'POST',body:JSON.stringify({article_version_id:currentArticleVersionId,author_verification_run_id:currentVerificationRunId})});await openProject(currentId);toast('Adversarial review and reconciliation complete.')});
+$('#revise').onclick=async()=>{
+ const projectId=currentId,articleVersionId=currentArticleVersionId,verificationRunId=currentVerificationRunId;
+ const original=currentWorkspace?.articles[0];
+ if(!original||$('#article').value!==original.content_markdown||$('#article-title').value!==original.title){toast('Save your edits and verify that version before using Fix draft.',true);return}
+ revisionPendingProjects.add(projectId);renderRevision(currentWorkspace);
+ try{
+  const result=await api(`/api/projects/${projectId}/revise`,{method:'POST',body:JSON.stringify({article_version_id:articleVersionId,verification_run_id:verificationRunId})});
+  revisionPendingProjects.delete(projectId);
+  if(currentId===projectId)await openProject(projectId);else await refreshProjects();
+  toast(`Revised draft v${result.version.version_number} saved. ${result.run.issues_unresolved} issues still need evidence or review. Reverification required.`);
+ }catch(error){
+  revisionPendingProjects.delete(projectId);
+  if(currentId===projectId)await openProject(projectId).catch(()=>{});
+  toast(error.message,true);
+ }finally{revisionPendingProjects.delete(projectId);if(currentWorkspace)renderRevision(currentWorkspace)}
+};
+$('#refresh-revision').onclick=()=>openProject(currentId).catch(error=>toast(error.message,true));
+function downloadText(filename,text,type='text/plain'){
+ const url=URL.createObjectURL(new Blob([text],{type})),link=document.createElement('a');link.href=url;link.download=filename;link.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+}
+$('#download-revision').onclick=()=>{const run=currentWorkspace?.revision_run;if(run?.revised_content_markdown)downloadText(`revised-draft-v${run.output_version_number}.md`,run.revised_content_markdown,'text/markdown')};
+$('#download-revision-audit').onclick=()=>{const run=currentWorkspace?.revision_run;if(run)downloadText(`revision-v${run.output_version_number||run.source_version_number}-changes.json`,JSON.stringify({source_version:run.source_version_number,output_version:run.output_version_number,change_summary:run.change_summary,issues:run.issue_resolutions},null,2),'application/json')};
+
+$('#export').onclick=()=>withButton($('#export'),'Exporting…',async()=>{const result=await api(`/api/projects/${currentId}/exports`,{method:'POST',body:JSON.stringify({article_version_id:currentArticleVersionId,verification_run_id:currentVerificationRunId,format:$('#export-format').value,scope:$('#export-scope').value})});window.location.href=`/api/projects/${currentId}/artifacts/${result.artifact.artifact_id}/download`;await openProject(currentId);toast('Report generated and downloaded.')});
+$('#source-form').onsubmit=async event=>{event.preventDefault();await withButton(event.submitter,'Adding…',async()=>{const assertionId=$('#source-assertion').value,sourceClass=$('#source-class').value;await api(`/api/projects/${currentId}/sources`,{method:'POST',body:JSON.stringify({title:$('#source-title').value,canonical_url:$('#source-url').value,source_type:'WEB_PAGE',assertion_id:assertionId||undefined,relationship_type:assertionId?$('#source-relationship').value:'BACKGROUND',proposition_source_class:assertionId&&sourceClass?sourceClass:undefined,classification_reason:assertionId&&sourceClass?'Manually classified by the operator.':undefined})});event.target.reset();await openProject(currentId);toast('Source added.')})};
+$('#findings-filter').onchange=()=>{if(currentWorkspace)renderAssertions(currentWorkspace.assertions,currentWorkspace.verification_results)};
+$('#prepare-pdfs').onclick=()=>withButton($('#prepare-pdfs'),'Extracting PDF text…',async()=>{const result=await api(`/api/projects/${currentId}/normalize-sources`,{method:'POST'});await openProject(currentId);toast(`${result.prepared} PDFs prepared; ${result.needs_attention} need attention. Run Verify to use newly extracted text.`)});
+document.querySelectorAll('.tab').forEach(button=>button.onclick=()=>{document.querySelectorAll('.tab').forEach(tab=>tab.classList.toggle('active',tab===button));document.querySelectorAll('.tab-panel').forEach(panel=>panel.hidden=panel.id!==button.dataset.tab)});
+await Promise.all([readiness(),refreshProjects()]).catch(error=>toast(error.message,true));
+
+if(/^#[0-9a-f-]+$/i.test(location.hash)) await openProject(location.hash.slice(1)).catch(error=>toast(error.message,true));
+
+function renderRevision(workspace){
+ const run=workspace.revision_run,report=buildReport(workspace.assertions,workspace.verification_results);
+ const running=run?.status==='RUNNING'||revisionPendingProjects.has(workspace.project.project_id);
+ const eligible=workspace.verification_run?.status==='COMPLETE'&&report.counts.attention>0&&!running;
+ $('#revise').disabled=!eligible;$('#revise').textContent=running?'Fixing draft…':'Fix draft';
+ $('#fix-draft-help').textContent=running?`Reviewing all ${run?.issues_total||report.counts.attention} findings. The original draft is preserved. This may take several minutes.`:eligible?`Address all ${report.counts.attention} actionable findings and save a new draft version. Preserve the original; mark anything that still needs evidence or review.`:'Verify the current draft to enable revisions. Revised drafts must be extracted and verified again.';
+ $('#revision-review').hidden=!run;
+ if(!run)return;
+ const done=run.status==='COMPLETE';
+ $('#revision-summary').textContent=done?`Draft v${run.source_version_number} → v${run.output_version_number}: ${run.issues_changed} findings addressed by edits; ${run.issues_unresolved} still need evidence or review. ${run.issues_total} total. These are proposed revisions, not verification results.`:run.status==='FAILED'?`Fix draft failed: ${run.error_message}. No revision was applied.`:'Fix draft is running. Refresh status to check progress.';
+ $('#revision-changes').textContent=run.change_summary||'';
+ $('#refresh-revision').hidden=done;
+ $('#download-revision').disabled=!done;$('#download-revision-audit').disabled=!done;
+ $('#revision-comparison').hidden=!done;$('#revision-audit').hidden=!done;
+ $('#revision-before-label').textContent=`Original · v${run.source_version_number}`;$('#revision-after-label').textContent=`Revised · v${run.output_version_number}`;
+ $('#revision-before').textContent=run.original_content_markdown||'';$('#revision-after').textContent=run.revised_content_markdown||'';
+ $('#revision-audit-label').textContent=`Review all ${run.issues_total} issue decisions`;
+ const list=$('#revision-issues');list.replaceChildren();
+ const unresolved=item=>['NEEDS_EVIDENCE','NEEDS_REVIEW'].includes(item.action);
+ for(const item of [...(run.issue_resolutions||[])].sort((a,b)=>Number(unresolved(b))-Number(unresolved(a)))){
+  const row=document.createElement('details'),heading=document.createElement('summary');heading.textContent=`${item.action.replaceAll('_',' ')} · ${item.original_assertion}`;row.append(heading);
+  const reason=document.createElement('p');reason.textContent=item.reason;row.append(reason);
+  if(item.revised_excerpt){const excerpt=document.createElement('blockquote');excerpt.textContent=item.revised_excerpt;row.append(excerpt)}list.append(row);
+ }
+}

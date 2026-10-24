@@ -1,0 +1,4 @@
+# Upstream 6.17.0 wheel, verified against PyPI release metadata on 2026-09-06.
+pypdf==6.17.0 --hash=sha256:5bd827266a21553b74d910e350131a6227b72f2ab4209bf372814b8195fa11c5
+# Upstream 3.2.9 wheel, reviewed as a dependency-free BSD-2-Clause XLSX writer.
+XlsxWriter==3.2.9 --hash=sha256:9a5db42bc5dff014806c58a20b9eae7322a134abb6fce3c92c181bfb275ec5b3

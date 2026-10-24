@@ -1,0 +1,29 @@
+# Dependencies and runtimes
+node_modules/
+.venv/
+**/__pycache__/
+*.pyc
+
+# Secrets and local configuration
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.pfx
+*.crt
+
+# Runtime data: acquired sources, generated reports, database dumps
+storage/
+*.dump
+*.sql.gz
+*.sqlite*
+*.db
+*.bak
+backups/
+
+# Logs, test output, caches
+*.log
+test-output/
+coverage/
+.npm-cache/

@@ -1,0 +1,375 @@
+{
+  "id": "research-workbench-ai-gateway",
+  "name": "Research Workbench - Authenticated AI Gateway",
+  "active": true,
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "research-workbench-ai",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        0
+      ],
+      "id": "2f918393-c6ee-4a11-a034-e06214ccb501",
+      "name": "Research AI Webhook",
+      "webhookId": "408886a3-bf51-4546-9c39-49327a0dfb66",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__PORTABLE__",
+          "name": "Research Workbench - Inbound Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw=$input.first().json||{};const b=raw.body&&typeof raw.body==='object'?raw.body:raw;const allowed=new Set(['draft','assertions','classify_source','verify','revise','red_team','reconcile']);if(!allowed.has(b.operation))throw new Error('Unsupported operation');if(typeof b.instructions!=='string'||typeof b.input!=='string'||!b.schema||typeof b.schema!=='object')throw new Error('Invalid gateway request');if(JSON.stringify(b).length>1800000)throw new Error('Gateway request too large');if(b.model&&!['gpt-5.4','gpt-5.4-mini','gpt-5.6-terra'].includes(b.model))throw new Error('Model is not allowed');const name=typeof b.name==='string'&&/^[a-z0-9_]{1,64}$/i.test(b.name)?b.name:'research_result';return [{json:{operation:b.operation,model:String(b.model||'gpt-5.4'),name,schema:b.schema,system:b.instructions+'\\nReturn only one valid JSON object. It must match this JSON Schema exactly; do not include Markdown or commentary:\\n'+JSON.stringify(b.schema),input:b.input}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        0
+      ],
+      "id": "6ceebcdc-ad82-437f-a748-ad27e598a677",
+      "name": "Validate Gateway Request"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "={{ $json.model }}",
+          "mode": "id"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "={{ $json.system }}"
+            },
+            {
+              "content": "={{ $json.input }}"
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "text"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        -144,
+        0
+      ],
+      "id": "99db00ae-1822-43b5-b17d-abd8d859ef91",
+      "name": "OpenAI - Structured Research",
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "openAiApi": {
+          "id": "__PORTABLE__",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "throw new Error('Paid fallback disabled: no automatic provider fallback.');"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-144, 144],
+      "id": "fd2ec3bb-fc45-4b86-bba8-d03f8246bd31",
+      "name": "Classify OpenAI Failure"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.fireworks.ai/inference/v1/chat/completions",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "openAiApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json.request }}",
+        "options": {
+          "timeout": 120000,
+          "redirect": {"redirect": {"followRedirects": false}}
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [112, 144],
+      "id": "10a789e2-3867-4a74-bc8f-4481bf799fab",
+      "name": "Fireworks - Structured Research Fallback",
+      "retryOnFail": false,
+      "credentials": {
+        "openAiApi": {"id": "__FIREWORKS_CREDENTIAL_ID__", "name": "__FIREWORKS_CREDENTIAL_NAME__"}
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const j=$input.first().json||{};const choice=j.choices?.[0];if(choice?.finish_reason!=='stop')throw new Error('Fireworks response did not finish normally.');const text=choice?.message?.content;if(typeof text!=='string'||Buffer.byteLength(text,'utf8')>16*1024*1024)throw new Error('Fireworks response text is missing or exceeds the gateway limit.');let result;try{result=JSON.parse(text.trim())}catch{throw new Error('Fireworks response was not valid JSON.')}if(!result||typeof result!=='object'||Array.isArray(result))throw new Error('Fireworks response was not a JSON object.');const model=String(j.model||'__FIREWORKS_MODEL__'),id=String(j.id||'unknown');result.provider_response_id=`fireworks:${model}:${id}`;return [{json:{result,provider:'fireworks',model,provider_response_id:result.provider_response_id,fallback:true}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [368, 144],
+      "id": "46f1d1e0-5b68-4378-b20e-f2d63bd52354",
+      "name": "Parse Fireworks Structured Result"
+    },
+    {
+      "parameters": {
+        "jsCode": "const j=$input.first().json||{};let text=null;for(const o of j.output||[]){for(const c of o.content||[]){if(typeof c.text==='string'){text=c.text;break}}if(text)break}text=text||j.output_text||j.text||j.content;if(typeof text!=='string')return [{json:{error:'OpenAI response contained no text'}}];let clean=text.trim().replace(/^```json\\s*/i,'').replace(/^```\\s*/i,'').replace(/\\s*```$/,'').trim();const first=clean.indexOf('{'),last=clean.lastIndexOf('}');if(first>=0&&last>first)clean=clean.slice(first,last+1);try{const result=JSON.parse(clean);const model=String(j.model||$('Validate Gateway Request').first().json.model),id=String(j.id||'unknown');result.provider_response_id=`openai:${model}:${id}`;return [{json:{result,provider:'openai',model,provider_response_id:result.provider_response_id,fallback:false}}]}catch(e){return [{json:{error:'OpenAI response was not valid JSON'}}]}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        0
+      ],
+      "id": "f39d7d66-e734-46db-8898-86a634afcf6c",
+      "name": "Parse Structured Result"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        368,
+        0
+      ],
+      "id": "4b2e9fde-60ef-4ac1-ab5a-29580f97f5f7",
+      "name": "Return Result"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "research-workbench-discovery",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -640,
+        320
+      ],
+      "id": "1ba5f081-46ee-4fa7-b27e-b8a9115348e2",
+      "name": "Discovery Webhook",
+      "webhookId": "ff853bc0-9827-463b-bd4f-ab625de4aed2",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "__PORTABLE__",
+          "name": "Research Workbench - Inbound Header Auth"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw=$input.first().json||{};const b=raw.body&&typeof raw.body==='object'?raw.body:raw;if(typeof b.assertion_text!=='string'||typeof b.normalized_proposition!=='string')throw new Error('Invalid discovery request');if(JSON.stringify(b).length>1800000)throw new Error('Gateway request too large');if(b.model&&!['gpt-5.4','gpt-5.4-mini','gpt-5.6-terra'].includes(b.model))throw new Error('Model is not allowed');return [{json:{model:String(b.model||'gpt-5.6-terra'),system:'You discover authoritative evidence for one atomic proposition. Search broadly enough to locate the actual primary instrument. Prefer official issuing-body, court, legislature, regulator, government dataset, patent-office, or original-publication URLs. Secondary sources may be returned only as discovery leads. Never treat a search snippet as evidence. Return JSON only with candidates and coverage_notes.',input:JSON.stringify(b)}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        320
+      ],
+      "id": "e99e30fa-4dfb-44a7-a8e3-9ad08bb59527",
+      "name": "Prepare Discovery"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "={{ $json.model }}",
+          "mode": "id"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "={{ $json.system }}"
+            },
+            {
+              "content": "={{ $json.input }}\n\nReturn exactly: {\"candidates\":[{\"canonical_url\":\"https://...\",\"title\":\"...\",\"issuing_authority\":\"...\",\"source_type\":\"STATUTE|REGULATION|JUDICIAL_OPINION|AGENCY_DOCUMENT|GOVERNMENT_DATASET|PATENT|SEC_FILING|ACADEMIC|NEWS|WEB_PAGE|OTHER\",\"authority_tier\":\"PRIMARY|OFFICIAL_SECONDARY|SECONDARY|DISCOVERY_ONLY\",\"relationship_type\":\"SUPPORTS|QUALIFIES|CONTRADICTS|BACKGROUND\",\"reason\":\"...\"}],\"coverage_notes\":\"...\"}"
+            }
+          ]
+        },
+        "builtInTools": {
+          "webSearch": {
+            "searchContextSize": "high",
+            "country": "US"
+          }
+        },
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "text"
+            }
+          },
+          "include": "web_search_call.action.sources"
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        -144,
+        320
+      ],
+      "id": "b9e94786-0789-47da-8eea-4b96a777ba60",
+      "name": "OpenAI - Primary Source Discovery",
+      "credentials": {
+        "openAiApi": {
+          "id": "__PORTABLE__",
+          "name": "OpenAI"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const j=$input.first().json||{};let text=null;for(const o of j.output||[]){for(const c of o.content||[]){if(typeof c.text==='string'){text=c.text;break}}if(text)break}if(!text)return [{json:{error:'Discovery response contained no text'}}];let clean=text.trim().replace(/^```json\\s*/i,'').replace(/^```\\s*/i,'').replace(/\\s*```$/,'').trim();const first=clean.indexOf('{'),last=clean.lastIndexOf('}');if(first>=0&&last>first)clean=clean.slice(first,last+1);try{const parsed=JSON.parse(clean);return [{json:{result:parsed}}]}catch(e){return [{json:{error:'Discovery response was not valid JSON'}}]}"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        112,
+        320
+      ],
+      "id": "ce769384-cf53-402c-91ad-93f5ec91e1b2",
+      "name": "Parse Discovery"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        368,
+        320
+      ],
+      "id": "5c2d58b0-938f-4836-a0d3-a59e594b4ee6",
+      "name": "Return Discovery"
+    }
+  ],
+  "connections": {
+    "Research AI Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate Gateway Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate Gateway Request": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Structured Research",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Structured Research": {
+      "main": [
+        [
+          {
+            "node": "Parse Structured Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {"node":"Classify OpenAI Failure","type":"main","index":0}
+        ]
+      ]
+    },
+    "Fireworks - Structured Research Fallback": {"main":[[{"node":"Parse Fireworks Structured Result","type":"main","index":0}]]},
+    "Parse Fireworks Structured Result": {"main":[[{"node":"Return Result","type":"main","index":0}]]},
+    "Parse Structured Result": {
+      "main": [
+        [
+          {
+            "node": "Return Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Discovery Webhook": {
+      "main": [
+        [
+          {
+            "node": "Prepare Discovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Discovery": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - Primary Source Discovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - Primary Source Discovery": {
+      "main": [
+        [
+          {
+            "node": "Parse Discovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Discovery": {
+      "main": [
+        [
+          {
+            "node": "Return Discovery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "executionTimeout": 300,
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveDataErrorExecution": "none",
+    "saveExecutionProgress": false
+  }
+}
