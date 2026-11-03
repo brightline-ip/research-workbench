@@ -24,3 +24,8 @@ First public preview.
 - Docker Compose setup (PostgreSQL + app, loopback-only) and a no-Docker path (`npm run migrate`, `npm start`).
 - Startup refuses to run without a model credential or on a non-loopback address unless explicitly allowed.
 - Offline test suite: 103 tests (99 pass and 4 skip without a Python document runtime; all 103 pass with it).
+
+## 0.1.0 (license) — 2026-11-02
+
+- Licensed under the PolyForm Noncommercial License 1.0.0 instead of Apache-2.0. Noncommercial use is free;
+  commercial use requires a license from Brightline IP.

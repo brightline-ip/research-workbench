@@ -1,6 +1,6 @@
 # Disclaimer
 
-Research Verification Workbench is a public preview research and workflow aid published by Brightline IP under the Apache License 2.0.
+Research Verification Workbench is a public preview research and workflow aid published by Brightline IP under the PolyForm Noncommercial License 1.0.0.
 
 - **Not legal advice.** The software does not provide legal advice or a legal opinion and does not create an
   attorney-client relationship. Its output is not a substitute for review by a qualified, registered practitioner.
@@ -15,6 +15,6 @@ Research Verification Workbench is a public preview research and workflow aid pu
 - **Third-party sources and terms.** You are responsible for complying with the terms of use, rate limits and
   copyright of every data source you access with this software, using your own credentials.
 - **No warranty.** The software is provided "AS IS", without warranties or conditions of any kind, as stated in
-  the Apache License 2.0, and Brightline IP is not liable for its use.
+  the PolyForm Noncommercial License 1.0.0, and Brightline IP is not liable for its use.
 - **Costs are yours.** Model calls are billed by your provider to your own account. The software's usage
   limits count calls and bytes, not money; set spending limits with your provider.

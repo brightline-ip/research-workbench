@@ -177,4 +177,5 @@ The suite runs offline with no database, no network and no API key. Four XLSX/re
 
 ## License and disclaimer
 
-Apache License 2.0, see [LICENSE](LICENSE) and [NOTICE](NOTICE). Published by Brightline IP. Not legal advice; read [DISCLAIMER.md](DISCLAIMER.md).
+PolyForm Noncommercial License 1.0.0: free for noncommercial use (personal, research, education, nonprofit). Commercial use (including use by or for a law firm, company or paying client) requires a separate license from Brightline IP: contact timisbright@gmail.com. See
+[LICENSE](LICENSE) and [NOTICE](NOTICE). Published by Brightline IP. Not legal advice; read [DISCLAIMER.md](DISCLAIMER.md).

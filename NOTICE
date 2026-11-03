@@ -1,7 +1,8 @@
 Research Verification Workbench
-Copyright 2026 Brightline IP
+Required Notice: Copyright 2026 Brightline IP
 
-This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+Licensed under the PolyForm Noncommercial License 1.0.0 (see LICENSE) for noncommercial
+purposes only. Commercial use (including use by or for a law firm, company or paying client) requires a separate license from Brightline IP: contact timisbright@gmail.com.
 
 Third-party components and terms:
 - node-postgres (pg) and its dependencies: MIT License, installed from npm (see package-lock.json).
