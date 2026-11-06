@@ -248,6 +248,7 @@ test('a database at migration 15 upgrades; an old sealed project reads honestly 
   catch (error) { await admin.end(); if (error.code === '42501') return t.skip('this role may not create a database'); throw error; }
   const address = new URL(url); address.pathname = `/${name}`;
   const pool = new pg.Pool({ connectionString: address.href });
+  pool.on('error', () => {}); // DROP DATABASE ... WITH (FORCE) below can end a connection that is still closing.
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'rw-upgrade-'));
   try {
     const packaged = new URL('../db/migrations/', import.meta.url), at15 = path.join(dir, 'at15');
