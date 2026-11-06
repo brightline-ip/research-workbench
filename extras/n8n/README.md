@@ -7,7 +7,7 @@ credential lives in n8n's encrypted credential store instead of the workbench en
 `research-workbench-ai-gateway.json` is an importable n8n workflow (prepared for n8n 2.37) with:
 
 - `POST /webhook/research-workbench-ai`: structured model calls (extraction, classification, verification,
-  revision, red team, reconciliation). The Code node accepts only those operations, a fixed model allowlist and
+  revision, red team, reconciliation). The Code node accepts only those operations, a fixed model allowlist (`gpt-5.4`, `gpt-5.4-mini`; edit it to match the models your account offers) and
   bodies under 1.8 MB.
 - `POST /webhook/research-workbench-discovery`: primary-source discovery with OpenAI web search.
 - Header authentication on both webhooks, no automatic retries, and execution data retention disabled for

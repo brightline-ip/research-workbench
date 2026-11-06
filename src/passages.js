@@ -13,6 +13,15 @@ export function isUnreadableText(text) {
   return bad / text.length > 0.01;
 }
 
+// Common login, paywall and bot-check pages arrive as HTTP 200 with readable text. This catches only short pages using
+// such wording; a longer wall or one worded differently still reaches the model, so read the quoted passage.
+const WALL_PHRASES=/sign[ -]?in|log[ -]?in|subscribe|subscription required|enable javascript|enable cookies|access denied|forbidden|captcha|verify you are (?:a )?human|are you a robot|checking your browser|paywall|create (?:a free |an )?account/gi;
+export function looksLikeAccessWall(text){
+  if(!text||text.length>2000)return false;
+  if(/^\s*(?:access denied|403 forbidden|forbidden|just a moment|attention required)/i.test(text))return true;
+  return new Set((text.match(WALL_PHRASES)||[]).map(phrase=>phrase.toLowerCase())).size>=2;
+}
+
 export function chunkNormalizedText(text, maxChars = 1800) {
   if (!Number.isInteger(maxChars) || maxChars < 1) throw new Error('Invalid passage size');
   text = text.replaceAll('\0', ''); // PostgreSQL text cannot hold NUL; a stray one must not block the whole source. Offsets refer to this text.

@@ -24,7 +24,7 @@ export async function corpusSettings(env = process.env) {
   if (!token && tokenFile) token = (await fs.readFile(tokenFile, 'utf8')).trim();
   if (!token) throw new UsageError('SOURCE_CORPUS_TOKEN (or a non-empty SOURCE_CORPUS_TOKEN_FILE) is required.');
   const workbenchUrl = new URL(env.WORKBENCH_URL || `http://127.0.0.1:${env.PORT || 3080}`).origin;
-  return { baseUrl, token, workbenchUrl };
+  return { baseUrl, token, workbenchUrl, workbenchToken: env.WORKBENCH_TOKEN || null };
 }
 
 async function readJson(response, limit) {
@@ -60,7 +60,7 @@ export async function main(argv = process.argv.slice(2), env = process.env, fetc
   const settings = await corpusSettings(env), client = corpusClient(settings, fetchImpl);
   if (command === 'search') { if (!value) throw new UsageError('Supply a search query'); return out(JSON.stringify(await client.search(collection, value), null, 2)); }
   if (!/^[a-f0-9-]{36}$/i.test(value || '')) throw new UsageError('Supply the research project UUID');
-  const response = await fetchImpl(`${settings.workbenchUrl}/api/projects/${value}`, { redirect: 'error', signal: AbortSignal.timeout(15000) });
+  const response = await fetchImpl(`${settings.workbenchUrl}/api/projects/${value}`, { headers: settings.workbenchToken ? { authorization: `Bearer ${settings.workbenchToken}` } : {}, redirect: 'error', signal: AbortSignal.timeout(15000) });
   if (!response.ok) { await response.body?.cancel(); throw new Error('Research project could not be read from the workbench'); }
   const items = projectSubmissions(value, await readJson(response, 64 * 1024 * 1024));
   const batches = []; for (let start = 0; start < items.length; start += 100) batches.push(await client.ingest(collection, items.slice(start, start + 100)));

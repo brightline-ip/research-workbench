@@ -179,9 +179,11 @@ export function createHandler(repository, orchestrator, sourceServices = {}) {
         if (body.assertion_id) {
           const assertion = await repository.getAssertion(sourceMatch[1], body.assertion_id);
           if (!assertion) return send(res, 404, { error: 'assertion not found' });
+          // Recorded by the server, never taken from the request.
+          body = { ...body, class_assigned_by: 'CALLER' };
           if (!body.proposition_source_class) {
           const classification = await orchestrator.classifySource({ assertion_text: assertion.assertion_text, normalized_proposition: assertion.normalized_proposition, candidate_source: { canonical_url: body.canonical_url, title: body.title || null, issuing_authority: body.issuing_authority || null } });
-          body = { ...body, ...classification };
+          body = { ...body, ...classification, class_assigned_by: 'MODEL' };
           }
         }
         return send(res, 201, await repository.registerSource(sourceMatch[1], body));
@@ -214,7 +216,7 @@ export function createHandler(repository, orchestrator, sourceServices = {}) {
       const logFields=failureLogFields(req,error);
       console.error(JSON.stringify({event:'request_failed',request_id:requestId,status,...logFields}));
       // Only the controlled vocabulary from failureLogFields reaches the caller, so retries can tell a provider outage from a permanent error.
-      const publicError=error.publicMessage||(error.providerReason?`The AI provider failed (${error.providerReason}). Retry when it is available.`:status===500?'Operation failed. Check the project status before retrying.':'Request could not be completed. Check the input and project status.');
+      const publicError=error.publicMessage||(error.providerReason?`The AI provider failed (${error.providerReason}). ${isPermanentProviderFailure(error.providerReason)?'Fix the provider setup before retrying.':'Retry when it is available.'}`:status===500?'Operation failed. Check the project status before retrying.':'Request could not be completed. Check the input and project status.');
       if (!res.headersSent) send(res,status,{error:publicError,...(status===500&&error.severity?{reason:logFields.reason}:{}),request_id:requestId});
       else res.destroy();
     } finally { if(operationKey)activeProjects.delete(operationKey); }

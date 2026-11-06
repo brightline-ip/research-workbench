@@ -54,6 +54,8 @@ services:
       SOURCE_STORAGE_ROOT: /data/sources
       PROJECT_STORAGE_ROOT: /data/projects
       WORKBENCH_DATA_DIR: /data
+      # The image's document runtime. Set here because a value in .env, even an empty one, would replace the image's.
+      ARTIFACT_PYTHON: /opt/research-python/bin/python
     command: ["sh", "-c", "node scripts/migrate.js && exec node src/server.js"]
     ports:
       - "127.0.0.1:${WORKBENCH_PORT:-3080}:3080"

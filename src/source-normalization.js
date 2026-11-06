@@ -1,4 +1,5 @@
 import { parserEnvironment } from './safety.js';
+import { writeStoredFile } from './stored-files.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
@@ -41,7 +42,7 @@ export async function prepareProjectPdfText(pool, root, projectId, extract = ext
       const key = path.posix.join(path.posix.dirname(path.posix.dirname(source.original_storage_path)), 'normalized', normalizedHash+'.txt');
       const destination = resolveStored(root, key);
       await fs.mkdir(path.dirname(destination), {recursive: true});
-      await fs.writeFile(destination, text, {flag: 'wx'}).catch(error => {if (error.code !== 'EEXIST') throw error;});
+      await writeStoredFile(destination, text);
       await pool.query(`UPDATE sources SET normalized_storage_path=$2,retrieval_status='NORMALIZED',
         provenance=coalesce(provenance,'{}'::jsonb) || $3::jsonb,updated_at=now() WHERE source_id=$1 AND normalized_storage_path IS NULL`,
       [source.source_id, key, JSON.stringify({text_extraction: 'PDF_TEXT', normalized_content_hash:normalizedHash, normalization_error: null})]);

@@ -9,6 +9,7 @@ import http from 'node:http';
 import https from 'node:https';
 import { Readable } from 'node:stream';
 import { readBounded } from './safety.js';
+import { writeStoredFile } from './stored-files.js';
 
 const MAX_BYTES = 25 * 1024 * 1024;
 
@@ -98,14 +99,14 @@ export async function acquireSource(urlValue, { fetchImpl, lookup = dns.lookup, 
     await fs.mkdir(path.join(directory, 'original'), { recursive: true });
     await fs.mkdir(path.join(directory, 'normalized'), { recursive: true });
     const originalPath = path.join(directory, 'original', `source${extension(mediaType)}`);
-    await fs.writeFile(originalPath, buffer, { flag: 'wx' }).catch(e => { if (e.code !== 'EEXIST') throw e; });
+    await writeStoredFile(originalPath, buffer);
     let normalized = normalizeText(buffer, mediaType), normalizationError = null;
     if (mediaType === 'application/pdf') {
       try { normalized = await extractPdf(originalPath); }
       catch (error) { normalizationError = error.message; }
     }
     let normalizedPath = null;
-    if (normalized !== null) { normalizedPath = path.join(directory, 'normalized', crypto.createHash('sha256').update(normalized).digest('hex')+'.txt'); await fs.writeFile(normalizedPath, normalized, { flag: 'wx' }).catch(e => { if (e.code !== 'EEXIST') throw e; }); }
+    if (normalized !== null) { normalizedPath = path.join(directory, 'normalized', crypto.createHash('sha256').update(normalized).digest('hex')+'.txt'); await writeStoredFile(normalizedPath, normalized); }
     return { finalUrl: current.toString(), httpStatus: response.status, mediaType, byteLength: buffer.length, contentHash, originalPath, normalizedPath, originalStorageKey: path.relative(storageRoot, originalPath).replaceAll('\\','/'), normalizedStorageKey: normalizedPath ? path.relative(storageRoot, normalizedPath).replaceAll('\\','/') : null, normalized, normalizationError, normalizedHash:normalized===null?null:crypto.createHash('sha256').update(normalized).digest('hex') };
   }
   throw new Error('Source exceeded redirect limit');

@@ -13,14 +13,23 @@ full = report.get('scope', 'all') == 'all'
 rows = payload.get('verification_results', [])
 title = 'Verification full ledger' if full else 'Verification summary'
 summary = (
-    f"{report.get('total', len(rows))} statements | {report.get('attention', 0)} need attention | "
+    f"{report.get('total', len(rows))} statements | {report.get('attention', 0)} need attention "
+    f"(on {report.get('nothing_compared', 0)} of these nothing was compared with a source) | "
         f"{report.get('not_checked', 0)} not checked (provider failure) | "
     f"{report.get('verified', 0)} verified | {report.get('not_applicable', 0)} no external check | "
     f"{report.get('pending', 0)} pending"
 )
 notes = ['No external check required does not mean verified. Missing evidence does not by itself establish that a claim is false.']
+notes.append('PRIMARY and SECONDARY are model judgments unless the row says a person or API caller set them. VERIFIED means a model judged a verbatim passage adequate; it is not certification.')
 notes.extend((article.get('import_metadata') or {}).get('warnings', []))
 evidence = payload.get('evidence', {})
+extraction = payload.get('extraction') or {}
+if extraction.get('coverage_complete') is False:
+    notes.append(f"Claim extraction reported incomplete coverage, so statements may be missing from this report: {extraction.get('coverage_notes') or 'no reason given'}")
+gaps = evidence.get('gaps') or {}
+unused = len(gaps.get('discovery_failures') or []) + len(gaps.get('excluded_sources') or [])
+if unused:
+    notes.append(f"{unused} sources could not be used: they failed to download, were blocked, were held for review, had no readable text, or looked like a login or access page.")
 notes.append(f"Evidence snapshot: {evidence['corpus_snapshot_id']} (frozen evidence)" if evidence.get('corpus_snapshot_id') else 'Legacy run: evidence was not frozen to source versions.')
 if report.get('omitted'):
     notes.append(f"Showing the first {report['included']} priority findings. {report['omitted']} additional actionable findings are available in the workbench and the Full ledger export.")
@@ -45,7 +54,7 @@ def details(row):
         return [('Action', textwrap.shorten(row.get('recommended_remediation', ''), width=220, placeholder='...'))]
     fields = [('Gap', row.get('material_gap')), ('Action', row.get('recommended_remediation')),
               ('Evidence', row.get('extracted_passage')), ('Location', row.get('pin_cite')),
-              ('Source', row.get('canonical_url'))]
+              ('Source', row.get('canonical_url')), ('Source class', row.get('source_class_label'))]
     return [(label, value) for label, value in fields if value]
 
 if sys.argv[1] == 'docx':
@@ -145,25 +154,28 @@ elif sys.argv[1] == 'xlsx':
             ['Verified', report.get('verified', 0)],
             ['No external check', report.get('not_applicable', 0)],
             ['Not checked (provider failure)', report.get('not_checked', 0)],
+            ['Nothing compared with a source', report.get('nothing_compared', 0)],
             ['Pending', report.get('pending', 0)],
         ]
         for index, row in enumerate(report_rows, 8):
             summary_sheet.write_row(index, 0, row)
-        summary_sheet.merge_range('A15:D15', 'No external check does not mean verified.')
+        summary_sheet.merge_range('A16:D16', 'No external check does not mean verified. PRIMARY and SECONDARY are model judgments unless the ledger says a person or API caller set them.')
 
     ledger = workbook.add_worksheet('Verification Ledger')
     ledger.hide_gridlines(2)
-    ledger_headers = ['Assertion ID', 'Status', 'Assertion', 'Source establishes', 'Material gap', 'Pin cite', 'Defect codes', 'Remediation', 'Source URL']
+    ledger_headers = ['Assertion ID', 'Status', 'Assertion', 'Source establishes', 'Material gap', 'Pin cite', 'Defect codes', 'Remediation', 'Source URL', 'Not checked reason', 'Passages examined', 'Source class', 'Class assigned by']
     ledger_rows = [[row.get('assertion_id', ''), row.get('status', ''), row.get('assertion_as_made', ''),
                     row.get('source_actually_establishes', ''), row.get('material_gap', ''), row.get('pin_cite', ''),
-                    ', '.join(row.get('defect_codes') or []), row.get('recommended_remediation', ''), row.get('canonical_url', '')]
+                    ', '.join(row.get('defect_codes') or []), row.get('recommended_remediation', ''), row.get('canonical_url', ''),
+                    row.get('not_checked_reason') or '', '' if row.get('candidate_passage_count') is None else row['candidate_passage_count'],
+                    row.get('source_class') or '', row.get('source_class_assigned_by') or '']
                    for row in rows]
     ledger.write_row(0, 0, ledger_headers, header_format)
     for index, row in enumerate(ledger_rows, 1):
         ledger.write_row(index, 0, row, wrapped)
         ledger.set_row(index, 48)
     ledger.set_row(0, 28)
-    for column, width in enumerate([38, 16, 42, 42, 38, 24, 28, 42, 48]):
+    for column, width in enumerate([38, 16, 42, 42, 38, 24, 28, 42, 48, 24, 12, 14, 16]):
         ledger.set_column(column, column, width)
     ledger.freeze_panes(1, 0)
     if ledger_rows:

@@ -115,7 +115,7 @@ test('readiness probes the pinned XLSX dependency instead of trusting a configur
 test('database readiness requires every packaged migration and separate checkpoint privileges', needsPython, async () => {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'rw-db-ready-'));
   const versions = (await fs.readdir(path.join(root, 'db', 'migrations'))).filter(name => /^\d+_.+\.sql$/.test(name)).map(name => name.slice(0, -4)).sort();
-  assert.equal(versions.length, 15);
+  assert.equal(versions.length, 16);
   const base = { sourceStorageRoot: path.join(directory, 'sources'), projectStorageRoot: path.join(directory, 'projects'),
     operationLimits: { minFreeBytes: 1 }, orchestrationMode: 'openai', artifactPython: requiredPython() };
   const pool = (applied, canSelect, canInsert) => ({ query: async sql => sql.startsWith('SELECT version')
@@ -129,7 +129,7 @@ test('database readiness requires every packaged migration and separate checkpoi
     const ready = await readiness(pool(versions, true, true), base);
     const check = ready.checks.find(item => item.name === 'database');
     assert.equal(check.status, 'READY');
-    assert.equal(check.detail, 'Connected; 15 packaged migrations and checkpoint privileges verified.');
+    assert.equal(check.detail, 'Connected; 16 packaged migrations and checkpoint privileges verified.');
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }

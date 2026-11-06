@@ -11,7 +11,8 @@ if [ ! -f .env ]; then
 fi
 if [ "${1:-}" = "--docker" ]; then
   docker compose up -d --build
-  echo "Research Workbench: http://127.0.0.1:${WORKBENCH_PORT:-3080}  (logs: docker compose logs -f app; stop: docker compose down)"
+  port=$(tr -d '\r' < .env | sed -n 's/^[[:space:]]*WORKBENCH_PORT[[:space:]]*=[[:space:]]*\([0-9][0-9]*\)[[:space:]]*$/\1/p' | head -n 1)
+  echo "Research Workbench: http://127.0.0.1:${port:-3080}  (logs: docker compose logs -f app; stop: docker compose down)"
   exit 0
 fi
 command -v node >/dev/null 2>&1 || { echo "Node.js 22.9 or later is required: https://nodejs.org/" >&2; exit 1; }

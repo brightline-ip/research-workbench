@@ -11,8 +11,10 @@ if (-not (Test-Path -LiteralPath '.env' -PathType Leaf)) {
   throw 'No .env file. Copy .env.example to .env and set OPENAI_API_KEY (and POSTGRES_PASSWORD for -Docker, or DATABASE_URL without Docker).'
 }
 $port = 3080
-$line = Select-String -LiteralPath '.env' -Pattern '^\s*(WORKBENCH_PORT|PORT)\s*=\s*(\d+)\s*$' | Select-Object -First 1
-if ($line) { $port = [int]$line.Matches[0].Groups[2].Value }
+# Compose publishes WORKBENCH_PORT on the host; without Docker the server listens on PORT.
+$portName = if ($Docker) { 'WORKBENCH_PORT' } else { 'PORT' }
+$line = Select-String -LiteralPath '.env' -Pattern "^\s*$portName\s*=\s*(\d+)\s*$" | Select-Object -First 1
+if ($line) { $port = [int]$line.Matches[0].Groups[1].Value }
 $url = "http://127.0.0.1:$port"
 
 if ($Docker) {

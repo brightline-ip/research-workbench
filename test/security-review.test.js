@@ -107,7 +107,10 @@ test('delete-project removes rows in one transaction, then the project folder', 
     assert.equal((await deleteProject(pool, { projectStorageRoot: root }, ID)).deleted, false);
     await fs.stat(dir);
     assert.equal((await deleteProject(pool, { projectStorageRoot: root }, ID, { confirm: true })).deleted, true);
-    assert.deepEqual(pool.log.filter(l => l !== 'release').map(l => l.split(' ')[0]), ['BEGIN', 'DELETE', 'DELETE', 'DELETE', 'COMMIT']);
+    const steps = pool.log.filter(l => l !== 'release');
+    assert.equal(steps[0], 'BEGIN'); assert.equal(steps.at(-1), 'COMMIT');
+    assert.ok(steps.some(l => l.startsWith('DELETE FROM evidence_passages')), 'sealed passages are deleted explicitly');
+    assert.ok(steps.some(l => l.startsWith('DELETE FROM projects')));
     await assert.rejects(fs.stat(dir));
   } finally { await fs.rm(root, { recursive: true, force: true }); }
 });

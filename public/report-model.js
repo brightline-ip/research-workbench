@@ -28,6 +28,12 @@ export function displayResult(assertion, result) {
   return result;
 }
 
+// Whether PRIMARY or SECONDARY came from a model or from whoever called the API. The class is not checked against the document.
+const CLASS_ORIGIN = {MODEL: 'model judgment', CALLER: 'set by a person or API caller', DEFAULT: 'default for a source nobody assessed', UNKNOWN: 'origin not recorded'};
+export function sourceClassLabel(result) {
+  return result?.source_class ? `${result.source_class} (${CLASS_ORIGIN[result.source_class_assigned_by] || CLASS_ORIGIN.UNKNOWN})` : '';
+}
+
 export function needsAttention(result) {
   return Boolean(result && !['VERIFIED', 'NOT_APPLICABLE'].includes(result.status));
 }
@@ -35,7 +41,7 @@ export function needsAttention(result) {
 export function buildReport(assertions = [], results = []) {
   const byId = new Map(results.map(result => [result.assertion_id, result]));
   const rows = assertions.map(assertion => ({assertion, result: displayResult(assertion, byId.get(assertion.assertion_id))}));
-  const counts = {total: assertions.length, verified: 0, attention: 0, not_applicable: 0, not_checked: 0, pending: 0, legacy_adjusted: 0};
+  const counts = {total: assertions.length, verified: 0, attention: 0, not_applicable: 0, not_checked: 0, nothing_compared: 0, pending: 0, legacy_adjusted: 0};
   for (const {result} of rows) {
     if (!result) counts.pending++;
     else if (result.status === 'VERIFIED') counts.verified++;
@@ -43,6 +49,7 @@ export function buildReport(assertions = [], results = []) {
     else if (result.status === 'NOT_CHECKED') counts.not_checked++;
     else counts.attention++;
     if (result?.status === 'NOT_APPLICABLE' && result.original_status) counts.legacy_adjusted++;
+    if (result?.not_checked_reason) counts.nothing_compared++;
   }
   // Concrete discrepancies first, then missing evidence; load-bearing items lead within each group.
   const priority = {CONTRADICTED: 0, FABRICATED: 0, MISCITED: 1, OVERSTATED: 1, STALE: 1, UNSUPPORTED: 2, UNVERIFIABLE: 3, NOT_CHECKED: 3, VERIFIED: 4, NOT_APPLICABLE: 5};

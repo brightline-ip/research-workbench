@@ -26,7 +26,7 @@ export class ArticleImportService {
         extraction=JSON.parse(await run(this.artifactPython,['-X','utf8',fileURLToPath(new URL('../scripts/extract_article.py',import.meta.url)),temporary,extension,'--json'])); content=extraction.text;
       }
       catch(error){throw Object.assign(new Error(`Could not extract readable text from ${safeName}. The file may be damaged, encrypted, image-only, or use unsupported Word structures.`),{statusCode:422,cause:error})}
-      finally { await fs.rm(directory,{recursive:true,force:true}); }
+      finally { await fs.rm(directory,{recursive:true,force:true,maxRetries:3}).catch(()=>console.error(JSON.stringify({event:'temp_cleanup_failed',area:'article_import'}))); }
     }
     if(!content.trim())throw new Error('no extractable article text was found');
     const title=path.basename(safeName,extension).trim()||'Imported article';

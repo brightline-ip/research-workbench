@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { writeStoredFile } from './stored-files.js';
 
 const sha256=value=>crypto.createHash('sha256').update(value).digest('hex');
 // The optional Source Corpus / Get Files service. Plain HTTP is accepted only for local origins.
@@ -50,6 +51,9 @@ export class CorpusImportService {
     if(sha256(original)!==documentId)throw controlled('Source Corpus original hash does not match document_id',409);
     let normalized=null;try{normalized=await this.#request(`/v1/documents/${documentId}/normalized${query}`,{binary:true})}catch(error){if(!input.allow_incomplete)throw error}
     if(!normalized?.length&&!input.allow_incomplete)throw controlled('Source Corpus document has no normalized text',409);
+    // Get Files records the hash of its normalized text in the document manifest. Text that differs is refused, even with allow_incomplete.
+    const corpusNormalizedHash=/^[a-f0-9]{64}$/.test(metadata.manifest?.normalized_sha256||'')?metadata.manifest.normalized_sha256:null;
+    if(normalized?.length&&corpusNormalizedHash&&sha256(normalized)!==corpusNormalizedHash)throw controlled('Source Corpus normalized text hash does not match its manifest',409);
     const originalKey=`corpus/${documentId.slice(0,2)}/${documentId}/original`;
     const normalizedHash=normalized?.length?sha256(normalized):null;
     const normalizedKey=normalizedHash?`corpus/${documentId.slice(0,2)}/${documentId}/normalized/${normalizedHash}.txt`:null;
@@ -62,9 +66,9 @@ export class CorpusImportService {
       jurisdiction:input.jurisdiction||null,publication_date:input.publication_date||null,version_label:input.version_label||null,
       content_hash:documentId,normalized_content_hash:normalizedHash,original_storage_path:originalKey,normalized_storage_path:normalizedKey,
       media_type:metadata.media_type||metadata.mime_type||'application/octet-stream',byte_length:original.length,retrieval_status:normalizedKey?'NORMALIZED':'ACQUIRED',
-      provenance:{retrieval_method:'SOURCE_CORPUS',collection,document_id:documentId,corpus_status:metadata.status||null,normalization_manifest:metadata.manifest||null,extraction_warnings:metadata.manifest?.warnings||metadata.warnings||[]},
+      provenance:{retrieval_method:'SOURCE_CORPUS',collection,document_id:documentId,normalized_content_hash:normalizedHash,normalized_hash_checked_against_corpus:Boolean(normalizedHash&&corpusNormalizedHash),corpus_status:metadata.status||null,normalization_manifest:metadata.manifest||null,extraction_warnings:metadata.manifest?.warnings||metadata.warnings||[]},
       assertion_links:input.assertion_links,
     });
   }
-  async #write(key,bytes){const root=path.resolve(this.storageRoot),target=path.resolve(root,key);if(!target.startsWith(root+path.sep))throw new Error('Invalid corpus storage key');await fs.mkdir(path.dirname(target),{recursive:true});try{await fs.writeFile(target,bytes,{flag:'wx'})}catch(error){if(error.code!=='EEXIST')throw error;if(sha256(await fs.readFile(target))!==sha256(bytes))throw controlled('Stored corpus file conflicts with imported hash',409)}}
+  async #write(key,bytes){const root=path.resolve(this.storageRoot),target=path.resolve(root,key);if(!target.startsWith(root+path.sep))throw new Error('Invalid corpus storage key');await fs.mkdir(path.dirname(target),{recursive:true});await writeStoredFile(target,bytes)}
 }
