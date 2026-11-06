@@ -21,7 +21,8 @@ the version, your configuration (without secret values), steps to reproduce and 
 - **The PostgreSQL server and the storage folder.** Their contents are not encrypted by the tool.
 - **The configured model provider (OpenAI, or your n8n gateway)** receives article text, claims and source
   passages. Model output is treated as untrusted data: it is schema-validated, quotations must match stored
-  source text verbatim, and it is never executed.
+  source text verbatim (which shows the quote exists, not that it supports the claim), and it is never executed.
+  Requests mark document and source text as untrusted data and tell the model not to follow instructions in it.
 
 ## What the tool does not trust
 
@@ -45,12 +46,14 @@ the version, your configuration (without secret values), steps to reproduce and 
 
 All projects, sources, reports and usage counters stay in your PostgreSQL database and storage folder. The
 tool makes outbound requests only to the model provider you configure, to source websites during
-acquisition and discovery, and, if you configure it, to a Get Files service. It sends no telemetry.
+acquisition and discovery, and, if you configure it, to a Get Files service. It sends no telemetry. Discovery in
+direct OpenAI mode uses OpenAI's hosted web search, so OpenAI and the search services it uses receive queries derived
+from your claims.
 
 ## Known limitations
 
 - The n8n gateway option (extras/n8n) authenticates with a static, replayable header over plain HTTP on
   your local network. Keep n8n local.
-- Prompt injection inside a source can influence model findings. Read the quoted evidence before relying on
-  a result.
+- Prompt injection inside a source can influence model findings, despite the instruction above. Read the quoted
+  evidence before relying on a result.
 - Usage limits bound the number and size of model calls, not cost.

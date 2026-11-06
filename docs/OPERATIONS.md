@@ -81,13 +81,21 @@ stay reproducible. Watch database size and free disk space yourself.
 
 `npm run delete-project -- <project-id>` shows which project and storage folder would be removed;
 add `--yes` to delete permanently (inside Docker: `docker compose exec app node scripts/delete-project.js <project-id> --yes`).
-Rows are removed in one transaction (articles, claims, runs, results, exports, usage and idempotency records
-for that project); the project's report folder under the projects storage root is removed after the commit.
-Make a backup first (see above), and do not run it while an operation on that project is active.
+Rows are removed in one transaction: articles, claims, runs, results, sealed passages and snapshots, reviews, exports,
+and idempotency records for that project. The project's report folder, and the stored files of deleted sources, are
+removed after the commit. Make a backup first (see above). It refuses while a run on that project is still marked
+running; if the app stopped mid-run, start it once so interrupted runs are closed.
 
-Acquired sources live in a shared, content-addressed warehouse and may be used by other projects, so they are
-kept. To reclaim them, remove sources no remaining project references (`sources` rows without a
-`project_sources` row, and their folders under the sources storage root) after reviewing them by hand.
+Sources live in a shared, content-addressed warehouse. A source this project used and no other project refers to is
+deleted too, with its stored files, because discovery would otherwise offer it to later projects. A source another
+project refers to is kept unchanged, so that project's sealed evidence stays valid. Two things can remain on a kept
+source: its title and URL, and the discovery model's reason for proposing it (`freshness_evidence`), which may echo a
+claim from the deleted project. The daily usage counters hold totals only. If a stored file cannot be removed, the
+command names it and exits non-zero; the database delete has already committed, so remove the file by hand.
+
+Sealed evidence stays immutable for everything else. Migration 016 lets the protection triggers pass only for rows of
+the project named in this command's own transaction. This guards against mistakes in application code, not against a
+database owner, who can always drop a trigger.
 
 ## Database roles
 

