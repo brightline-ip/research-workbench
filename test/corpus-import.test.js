@@ -29,6 +29,12 @@ test('imports exact corpus bytes, hashes, warnings, and explicit links without a
   assert.equal(hash(await fs.readFile(path.join(f.root,'sources',f.saved.input.original_storage_path))),f.id);
 });
 
+test('a named local file gets a placeholder address instead of its origin',async()=>{
+  const f=await fixture();
+  await f.service.import('p',{collection:'legal',document_id:f.id,local_source:true,assertion_links:[{assertion_id:'a',relationship_type:'BACKGROUND',proposition_source_class:'PRIMARY',classification_reason:'Named.'}]});
+  assert.equal(f.saved.input.canonical_url,`https://get-files.invalid/legal/${f.id}`);
+});
+
 test('fails closed on original hash mismatch and incomplete extraction',async()=>{
   const bad=await fixture({badOriginal:true});
   await assert.rejects(bad.service.import('p',{collection:'legal',document_id:bad.id,assertion_links:[{assertion_id:'a'}]}),/hash does not match/);

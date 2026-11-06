@@ -10,6 +10,8 @@ export function sourceCorpusOrigin(baseUrl){
   if(url.username||url.password||url.search||url.hash||url.pathname!=='/'||(!['https:'].includes(url.protocol)&&!(url.protocol==='http:'&&['127.0.0.1','localhost','[::1]','host.docker.internal'].includes(url.hostname))))throw new Error('Source Corpus URL must be a trusted local HTTP origin or HTTPS origin');
   return url.origin;
 }
+// A file the caller named has no web address. This reserved name can never resolve, so nothing fetches it.
+export const LOCAL_SOURCE_PREFIX='https://get-files.invalid/';
 const controlled=(message,statusCode=422)=>Object.assign(new Error(message),{statusCode,publicMessage:message});
 
 export class CorpusImportService {
@@ -59,7 +61,7 @@ export class CorpusImportService {
     const normalizedKey=normalizedHash?`corpus/${documentId.slice(0,2)}/${documentId}/normalized/${normalizedHash}.txt`:null;
     await this.#write(originalKey,original);if(normalizedKey)await this.#write(normalizedKey,normalized);
     const origin=Array.isArray(metadata.origins)?metadata.origins.find(item=>item?.source_url||item?.url):null;
-    const canonicalUrl=origin?.source_url||origin?.url;
+    const canonicalUrl=input.local_source===true?`${LOCAL_SOURCE_PREFIX}${collection}/${documentId}`:origin?.source_url||origin?.url;
     if(!canonicalUrl)throw controlled('Source Corpus metadata has no canonical source URL',409);
     return this.repository.importCorpusSource(projectId,{
       canonical_url:canonicalUrl,title:input.title||metadata.title||null,source_type:input.source_type||'OTHER',issuing_authority:input.issuing_authority||null,

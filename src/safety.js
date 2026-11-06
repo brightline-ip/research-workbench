@@ -44,7 +44,7 @@ const ADAPTER_REASONS = new Set(['adapter busy; retry later', 'adapter error', '
 const knownAdapterReason = (value) => typeof value === 'string' && (ADAPTER_REASONS.has(value));
 // 4xx (except timeout and rate limit) and login or model rejections stay wrong until someone fixes the setup.
 export function isPermanentProviderFailure(reason) {
-  return /^HTTP 4(?!08|29)\d\d\b/.test(reason || '') || /login rejected|model not supported|Model is not allowed|Discovery is disabled/.test(reason || '');
+  return /^HTTP 4(?!08|29)\d\d\b/.test(reason || '') || /login rejected|model not supported|Model is not allowed|Discovery is disabled|credit_balance_exhausted|insufficient_quota/.test(reason || '');
 }
 export function providerFailureReason(error, timeoutMs) {
   if (error?.providerReason) return error.providerReason;
@@ -60,6 +60,7 @@ async function rejectionReason(response) {
   try {
     const body = JSON.parse((await readBounded(response, 4096)).toString('utf8'));
     if (knownAdapterReason(body?.error)) detail = `: ${body.error}`;
+    else if (/^[a-z][a-z0-9_]{2,60}$/.test(body?.error?.code || body?.error?.type || '')) detail = `: ${body.error.code || body.error.type}`; // a provider's error code, never its message
   } catch { /* the body is not needed to report the status */ }
   return `HTTP ${response.status}${detail}`;
 }

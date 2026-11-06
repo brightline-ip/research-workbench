@@ -318,7 +318,7 @@ export class Repository {
       FROM verification_results vr LEFT JOIN sources s USING(source_id) LEFT JOIN evidence_passages ep USING(evidence_passage_id) LEFT JOIN source_versions sv ON sv.source_version_id=ep.source_version_id WHERE verification_run_id=$1 ORDER BY vr.created_at`,[verificationRunId]);
     const {rows:assertions}=await this.pool.query('SELECT * FROM assertions WHERE article_version_id=$1',[articleVersionId]);
     const actionable=revisionFindings(assertions,results);
-    if(!actionable.length)throw conflict('There are no actionable verification findings to fix.');
+    if(!actionable.length)throw conflict('There are no actionable verification findings to fix. A claim where nothing was compared is a gap in the check, not a finding, so it is left as written.');
     let run;
     try {
       ({rows:[run]}=await this.pool.query(`INSERT INTO revision_runs(project_id,source_article_version_id,verification_run_id,instruction,model_name,issues_total)

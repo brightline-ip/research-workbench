@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.0 (quotes and named sources) - 2026-11-06
+
+- A quotation in a claim is checked word for word in code against the qualifying sources. A quotation found in none of them is
+  recorded as `QUOTE_NOT_IN_SOURCES`, and a model's `VERIFIED` becomes `MISCITED`.
+- `VERIFIED` needs a quoted passage of at least 8 words or 40 characters.
+- Fix draft leaves claims where nothing was compared as written. They are gaps in the check, not findings.
+- `corpus-import` takes `local_source` for a file with no web address. Web discovery never reuses such a file.
+- A provider rejection records the provider's error code (for example `HTTP 429: credit_balance_exhausted`), never its message.
+- HTML sources decode more entities, including section signs and curly quotes.
+
 ## Unreleased
 
 - Security review fixes: discovered URLs lose query strings/fragments unless the host is trusted, with an

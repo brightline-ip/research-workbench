@@ -59,8 +59,33 @@ export function rankPassages(assertionText, passages, limit = 5) {
   }).filter(p => p.retrieval_score > 0).sort((a,b) => b.retrieval_score - a.retrieval_score || a.sequence_number - b.sequence_number).slice(0, limit);
 }
 
+// A quote of "the" also appears in the source, so VERIFIED needs enough quoted text for a person to judge it by.
+export const MIN_VERIFIED_QUOTE_WORDS=8, MIN_VERIFIED_QUOTE_CHARS=40;
+const longEnoughQuote=text=>text.trim().length>=MIN_VERIFIED_QUOTE_CHARS||text.trim().split(/\s+/).length>=MIN_VERIFIED_QUOTE_WORDS;
+
+const quoteForm=text=>text.replace(/[\u201c\u201d\u201e\u00ab\u00bb]/g,'"').replace(/[\u2018\u2019]/g,"'").replace(/[\u2010-\u2015]/g,'-').replace(/\s+/g,' ');
+// The word-for-word parts of what a claim puts in quotation marks. Ellipses and bracketed changes split a quotation.
+export function quotedPieces(text){
+  const pieces=[];
+  for(const [,quoted] of quoteForm(text||'').matchAll(/"([^"]+)"/g))for(const piece of quoted.split(/\.\.\.|\u2026|\[[^\]]*\]/)){
+    const clean=piece.trim().replace(/[.,;:]+$/,'').toLowerCase();
+    if(clean.split(' ').length>=3)pieces.push(clean);
+  }
+  return [...new Set(pieces)];
+}
+// Checked in code, not by a model: quotations a claim makes that appear in none of these sources, compared whole so a passage boundary cannot hide one.
+export function missingQuotes(assertion,passages){
+  const pieces=quotedPieces(`${assertion.evidence_span||''} ${assertion.assertion_text||''}`);
+  if(!pieces.length)return [];
+  const bySource=new Map();
+  for(const p of [...passages].sort((a,b)=>a.sequence_number-b.sequence_number))bySource.set(p.source_id,`${bySource.get(p.source_id)||''} ${p.passage_text}`);
+  const texts=[...bySource.values()].map(text=>quoteForm(text).toLowerCase());
+  return pieces.filter(piece=>!texts.some(text=>text.includes(piece)));
+}
+
 export function validateVerificationEvidence(result, candidates) {
   if (result.status === 'VERIFIED' && (!result.source_id || !result.passage_id || !result.extracted_passage?.trim())) throw new Error('VERIFIED requires an acquired source passage');
+  if (result.status === 'VERIFIED' && !longEnoughQuote(result.extracted_passage)) throw new Error('VERIFIED requires a quote long enough to judge');
   if (result.extracted_passage) {
     const candidate = candidates.find(p => p.passage_id === result.passage_id && p.source_id === result.source_id);
     if (!candidate || !candidate.passage_text.includes(result.extracted_passage)) throw new Error('Verification passage is not verbatim retrieved evidence');

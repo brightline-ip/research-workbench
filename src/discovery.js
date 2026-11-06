@@ -1,4 +1,5 @@
 import { EvidenceStore, DISCOVERY_FAILURES_SQL, readableDiscoveryFailures, sourceFailureReason } from './evidence-store.js';
+import { LOCAL_SOURCE_PREFIX } from './corpus-import.js'; // files a caller named for one project are never offered to another
 import { fetchJson } from './safety.js';
 import { requiresExternalEvidence } from '../public/report-model.js';
 import { planDiscoveryGroups,estimateDiscoveryUsage } from './discovery-plan.js';
@@ -71,8 +72,8 @@ export class DiscoveryService {
         SELECT source_id FROM sources WHERE lower(coalesce(title,'')) LIKE ANY($1::text[]) OR lower(coalesce(canonical_identity,'')) LIKE ANY($1::text[])
         UNION SELECT source_id FROM source_text_chunks WHERE lower(coalesce(passage_text,'')) LIKE ANY($1::text[])
         UNION SELECT source_id FROM evidence_passages WHERE lower(passage_text) LIKE ANY($1::text[]))
-      SELECT s.* FROM sources s WHERE s.retrieval_status IN('ACQUIRED','NORMALIZED') AND s.source_id IN (SELECT source_id FROM hits)
-      ORDER BY s.last_freshness_checked_at DESC NULLS LAST,s.retrieved_at DESC LIMIT 10`, [patterns]);
+      SELECT s.* FROM sources s WHERE s.retrieval_status IN('ACQUIRED','NORMALIZED') AND s.source_id IN (SELECT source_id FROM hits) AND s.canonical_url NOT LIKE $2
+      ORDER BY s.last_freshness_checked_at DESC NULLS LAST,s.retrieved_at DESC LIMIT 10`, [patterns,`${LOCAL_SOURCE_PREFIX}%`]);
     return rows;
   }
 

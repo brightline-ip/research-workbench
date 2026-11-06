@@ -231,7 +231,9 @@ Files service: `{"collection": "legal", "document_id": "<64-hex sha256 of the or
 The server fetches the original and normalized text itself, checks the original's hash against `document_id`
 and the normalized text's hash against `manifest.normalized_sha256` when the service supplies it (a mismatch is
 `409`, even with `allow_incomplete`), and accepts no file paths. Links are recorded as assigned by `CALLER`. 1-500 explicit links are required. Documents not marked `ready` are
-refused unless `allow_incomplete` is true. Returns `503` when Get Files is not configured.
+refused unless `allow_incomplete` is true. Returns `503` when Get Files is not configured. A document with no web address is refused
+(`409`) unless the caller sends `"local_source": true`. It is then recorded under a placeholder address, `https://get-files.invalid/<collection>/<document_id>`,
+that nothing fetches, and web discovery never reuses it for another claim or project.
 
 `GET /api/projects/{id}/sources/{source_id}/original` and `.../normalized` download the stored original or
 normalized text as a sandboxed attachment.

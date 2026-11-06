@@ -52,7 +52,7 @@ async function link(w, target, source, cls = 'PRIMARY') {
   await w.pool.query(`INSERT INTO project_sources(project_id,source_id,membership_status) VALUES($1,$2,'ACCEPTED') ON CONFLICT DO NOTHING`, [target.id, source.source_id]);
   await w.pool.query(`INSERT INTO assertion_source_relationships(assertion_id,source_id,relationship_type,proposition_source_class,classification_reason,discovery_only,class_assigned_by) VALUES($1,$2,'SUPPORTS',$3,'test',false,'CALLER')`, [target.assertion.assertion_id, source.source_id, cls]);
 }
-const orchestrator = { async verifyAssertion(input) { const c = input.candidate_passages[0]; return { source_id: c.source_id, passage_id: c.passage_id, assertion_as_made: 'x', source_actually_establishes: 'x', material_gap: '', extracted_passage: c.passage_text.slice(0, 30), status: 'VERIFIED', defect_codes: [], confidence: 0.9, recommended_remediation: 'none' }; } };
+const orchestrator = { async verifyAssertion(input) { const c = input.candidate_passages[0]; return { source_id: c.source_id, passage_id: c.passage_id, assertion_as_made: 'x', source_actually_establishes: 'x', material_gap: '', extracted_passage: c.passage_text, status: 'VERIFIED', defect_codes: [], confidence: 0.9, recommended_remediation: 'none' }; } };
 const verify = (w, target) => new VerificationService(w.pool, orchestrator, w.config.sourceStorageRoot, 'm', 1, w.store).run(target.id, target.version);
 
 test('sealed evidence stays immutable outside a project delete', options, async () => {
@@ -290,7 +290,7 @@ test('a database at migration 15 upgrades; an old sealed project reads honestly 
     assert.equal(workspace.discovery_failures[0].reason, 'The source could not be downloaded.');
     assert.match(coverageText(workspace.verification_run, workspace.verification_results), /^Older run/);
     assert.equal(buildReport(workspace.assertions, workspace.verification_results).counts.older_not_checked, 1);
-    assert.equal(revisionFindings(workspace.assertions, [authorRow])[0].status, 'UNVERIFIABLE');
+    assert.deepEqual(revisionFindings(workspace.assertions, [authorRow]), [], 'a gap in the check is not a finding to fix');
     const exported = await new ExportService(pool, config).generate(old.id, { article_version_id: old.version, verification_run_id: authorRun.verification_run_id, format: 'csv', scope: 'all' });
     const csv = await fs.readFile(exported.output_path, 'utf8');
     assert.match(csv, /"UNSUPPORTED","OLDER_RUN"/); assert.doesNotMatch(csv, /absent from the approved corpus/);

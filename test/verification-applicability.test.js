@@ -67,7 +67,7 @@ test('worker errors drain in-flight operations before failing the run', async ()
 test('secondary evidence is eligible only when the claim explicitly permits it', async () => {
   for (const primaryRequired of [true,false]) {
     let modelCalls=0;
-    const claim={assertion_id:'a',project_id:'p',assertion_text:'The author recommends reform.',source_required:true,primary_source_required:primaryRequired};
+    const claim={assertion_id:'a',project_id:'p',assertion_text:'The author recommends reform of the examination rules this year.',source_required:true,primary_source_required:primaryRequired};
     const pool={async query(sql,values=[]){
       if(sql.startsWith('SELECT * FROM assertions'))return {rows:[claim]};
       if(sql.startsWith('INSERT INTO verification_runs'))return {rows:[{verification_run_id:'run'}]};

@@ -38,13 +38,11 @@ test('the old-row rule does not swallow real verdicts', () => {
   assert.equal(displayResult({ ...claim, source_required: false, primary_source_required: false }, oldRow()).status, 'NOT_APPLICABLE', 'no source was requested');
 });
 
-test('report counts and Fix draft treat an old row like any claim with nothing compared', () => {
+test('report counts treat an old row like any claim with nothing compared, and Fix draft leaves it alone', () => {
   const { counts, rows } = buildReport([claim], [oldRow()]);
   assert.equal(counts.nothing_compared, 1); assert.equal(counts.older_not_checked, 1); assert.equal(counts.not_checked, 0, 'this was no provider failure');
   assert.ok(needsAttention(rows[0].result));
-  const [finding] = revisionFindings([claim], [oldRow()]);
-  assert.equal(finding.status, 'UNVERIFIABLE'); assert.match(finding.material_gap, /^Nothing was checked/);
-  assert.equal(finding.original_status, undefined, 'the old label is not sent to the revising model');
+  assert.deepEqual(revisionFindings([claim], [oldRow()]), [], 'a gap in the check is not a finding to fix');
 });
 
 test('an old row is not a shared defect, in a new comparison or a stored one', () => {

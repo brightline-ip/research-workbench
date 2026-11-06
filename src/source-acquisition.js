@@ -13,6 +13,16 @@ import { writeStoredFile } from './stored-files.js';
 
 const MAX_BYTES = 25 * 1024 * 1024;
 
+const NAMED_ENTITIES={nbsp:' ',lt:'<',gt:'>',quot:'"',apos:"'",rsquo:'\u2019',lsquo:'\u2018',rdquo:'\u201d',ldquo:'\u201c',ndash:'\u2013',mdash:'\u2014',hellip:'\u2026',sect:'\u00a7',para:'\u00b6',copy:'\u00a9',reg:'\u00ae',trade:'\u2122',shy:''};
+// One pass, with &amp; decided here too, so "&amp;lt;" stays the text "&lt;".
+export function decodeHtmlEntities(text){
+  return text.replace(/&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|([a-z]{2,8}));/gi,(whole,decimal,hex,name)=>{
+    if(name)return name.toLowerCase()==='amp'?'&':NAMED_ENTITIES[name.toLowerCase()]??whole;
+    const code=decimal?Number(decimal):parseInt(hex,16);
+    return code>0&&code<=0x10ffff&&!(code>=0xd800&&code<=0xdfff)?String.fromCodePoint(code):whole;
+  });
+}
+
 export function canonicalizeUrl(value) {
   const url = new URL(value);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Only credential-free HTTP(S) source URLs are allowed');
@@ -70,10 +80,10 @@ export function normalizeText(buffer, mediaType) {
     try { buffer = zlib.gunzipSync(buffer, { maxOutputLength: 64 * 1024 * 1024 }); } catch { return null; }
   }
   const raw = buffer.toString('utf8');
-  if (mediaType.includes('html')) return raw
+  if (mediaType.includes('html')) return decodeHtmlEntities(raw
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ').replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
     .replace(/<\/(p|div|section|article|li|h[1-6]|tr)>/gi, '\n').replace(/<br\s*\/?\s*>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/&amp;/gi, '&').replace(/&lt;/gi, '<').replace(/&gt;/gi, '>').replace(/&quot;/gi, '"').replace(/&#39;/gi, "'")
+    .replace(/<[^>]+>/g, ' '))
     .replace(/[ \t]+/g, ' ').replace(/\n\s*\n+/g, '\n\n').trim();
   if (/^(text\/|application\/(json|xml))/i.test(mediaType)) return raw.replace(/\r\n/g, '\n').trim();
   return null;

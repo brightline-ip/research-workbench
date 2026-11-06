@@ -1,5 +1,5 @@
 import { EvidenceStore, storedFailureReason } from './evidence-store.js';
-import { rankPassages, validateVerificationEvidence } from './passages.js';
+import { missingQuotes, rankPassages, validateVerificationEvidence } from './passages.js';
 import { requiresExternalEvidence } from '../public/report-model.js';
 import { mapConcurrent } from './concurrency.js';
 import { isPermanentProviderFailure } from './safety.js';
@@ -101,6 +101,11 @@ export class VerificationService {
         // UNSUPPORTED is the model's reading of these passages only, so the record says what it was shown.
         if(result.status==='UNSUPPORTED')result={...result,material_gap:`Not found in the ${plural(new Set(candidates.map(p=>p.passage_id)).size,'passage')} retrieved (the best word matches among ${plural(primary.length,'eligible passage')}). ${result.material_gap||''}`.trim()}; }
       catch(error){if(error.publicMessage&&error.statusCode)throw error;if(error.providerReason){const message=`Verification stopped before finishing: the AI provider failed (${error.providerReason}). This run is incomplete and unchecked claims have no result. ${isPermanentProviderFailure(error.providerReason)?'Fix the provider setup, then run verification again.':'Retry when the provider is available.'}`;throw Object.assign(new Error(message),{statusCode:isPermanentProviderFailure(error.providerReason)?500:503,publicMessage:message,providerReason:error.providerReason})}result={source_id:null,passage_id:null,assertion_as_made:assertion.assertion_text,source_actually_establishes:'The verifier did not return a valid verbatim evidence extraction.',material_gap:`Verification output failed evidence validation: ${error.message}`,extracted_passage:null,status:'UNVERIFIABLE',defect_codes:[],confidence:null,recommended_remediation:'Retry verification or inspect the retrieved primary passages manually.',provider_response_id:null,not_checked_reason:'INVALID_MODEL_REPLY'}}
+    }
+    if(candidates.length&&!result.not_checked_reason){
+      const missing=missingQuotes(assertion,primary);
+      // A fact the code can settle, so a model's VERIFIED does not stand against it.
+      if(missing.length)result={...result,status:result.status==='VERIFIED'?'MISCITED':result.status,defect_codes:[...new Set([...(result.defect_codes||[]),'QUOTE_NOT_IN_SOURCES'])],material_gap:`Word-for-word check: ${missing.map(q=>`"${q}"`).join(', ')} was not found in the qualifying sources. ${result.material_gap||''}`.trim()};
     }
     const passage = result.passage_id ? candidates.find(p => p.passage_id === result.passage_id) : null;
     return this.#saveResult(runId, assertion, result, passage, candidates);

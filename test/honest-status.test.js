@@ -37,7 +37,7 @@ async function verifyOne({ links = [], passages = [], versions = [], failures = 
   const outcome = await new VerificationService(pool, orchestrator, '/x', 'm', 1, store).run('p', 'v');
   return { outcome, saved: saved[0], calls, metrics: runUpdates[0] };
 }
-const verifiedReply = input => ({ source_id: 's', passage_id: input.candidate_passages[0].passage_id, assertion_as_made: 'x', source_actually_establishes: 'x', material_gap: '', extracted_passage: input.candidate_passages[0].passage_text.slice(0, 20), status: 'VERIFIED', defect_codes: [], confidence: 1, recommended_remediation: 'none' });
+const verifiedReply = input => ({ source_id: 's', passage_id: input.candidate_passages[0].passage_id, assertion_as_made: 'x', source_actually_establishes: 'x', material_gap: '', extracted_passage: input.candidate_passages[0].passage_text, status: 'VERIFIED', defect_codes: [], confidence: 1, recommended_remediation: 'none' });
 
 test('no source: UNVERIFIABLE, says nothing was checked, no model call', async () => {
   const { saved, calls, metrics } = await verifyOne({});
