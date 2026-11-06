@@ -1,5 +1,8 @@
 import { EvidenceStore, DISCOVERY_FAILURES_SQL, readableDiscoveryFailures, sourceFailureReason } from './evidence-store.js';
 import { LOCAL_SOURCE_PREFIX } from './corpus-import.js'; // files a caller named for one project are never offered to another
+import { rankPassages } from './passages.js';
+
+const STORED_SOURCE_COVERAGE=.6;
 import { fetchJson } from './safety.js';
 import { requiresExternalEvidence } from '../public/report-model.js';
 import { planDiscoveryGroups,estimateDiscoveryUsage } from './discovery-plan.js';
@@ -22,12 +25,12 @@ export class DiscoveryService {
   }
 
   async run(projectId, articleVersionId, policy = {}) {
-    const effectivePolicy = { mode:'AUTHOR_CORPUS',warehouse_first:true,primary_sources_required:true,max_external_queries:40,max_group_size:8,similarity_threshold:.42,freshness_max_age_days:14,...policy };
+    const effectivePolicy = { mode:'AUTHOR_CORPUS',warehouse_first:true,primary_sources_required:true,max_external_queries:40,max_group_size:8,similarity_threshold:.42,freshness_max_age_days:14,reuse_max_age_days:90,...policy };
     effectivePolicy.max_external_queries=Math.max(0,Math.min(40,Math.floor(Number(effectivePolicy.max_external_queries)||0)));
     const { rows: assertions } = await this.pool.query('SELECT * FROM assertions WHERE project_id=$1 AND article_version_id=$2 ORDER BY load_bearing DESC,start_offset', [projectId, articleVersionId]);
     if (!assertions.length) throw new Error('Extract assertions before discovery');
     const { rows: [run] } = await this.pool.query(`INSERT INTO discovery_runs(project_id,article_version_id,mode,policy,model_name,assertions_total) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`, [projectId, articleVersionId,effectivePolicy.mode, effectivePolicy, this.model, assertions.length]);
-    let searched=0,warehouseCount=0,externalCount=0,acquiredCount=0,groupsTotal=0;const unresolved=[];
+    let searched=0,warehouseCount=0,externalCount=0,acquiredCount=0,groupsTotal=0,answeredFromStore=0;const unresolved=[];
     try {
       for (const assertion of assertions.filter(requiresExternalEvidence)) {
         const warehouse = effectivePolicy.warehouse_first ? await this.warehouseCandidates(assertion) : [];
@@ -36,8 +39,8 @@ export class DiscoveryService {
           warehouseCount++;
           await this.acceptExisting(run.discovery_run_id, assertion, source);
         }
-        const hasCurrentPrimary = warehouse.some(s => s.authority_tier === 'PRIMARY' && s.freshness_status === 'CURRENT');
-        if (!hasCurrentPrimary) unresolved.push(assertion);
+        if (await this.storedPrimaryCovers(assertion, warehouse, effectivePolicy.reuse_max_age_days)) answeredFromStore++;
+        else unresolved.push(assertion);
         await this.pool.query('UPDATE discovery_runs SET assertions_searched=assertions_searched+1 WHERE discovery_run_id=$1', [run.discovery_run_id]);
       }
       const groups=planDiscoveryGroups(unresolved,{maxGroupSize:effectivePolicy.max_group_size,similarityThreshold:effectivePolicy.similarity_threshold});groupsTotal=groups.length;
@@ -49,7 +52,7 @@ export class DiscoveryService {
       }
       const snapshot = await this.sealSnapshot(projectId, articleVersionId, run.discovery_run_id, effectivePolicy);
       const source_failures = readableDiscoveryFailures((await this.pool.query(DISCOVERY_FAILURES_SQL,[run.discovery_run_id])).rows);
-      const notes=[`Sealed corpus snapshot ${snapshot.corpus_snapshot_id} with ${snapshot.source_count} exact source versions.`,source_failures.length&&`${source_failures.length} discovered sources could not be used; see source_failures.`,groupsTotal>searched&&`${groupsTotal-searched} of ${groupsTotal} claim groups were not searched because of max_external_queries.`].filter(Boolean).join(' ');
+      const notes=[`Sealed corpus snapshot ${snapshot.corpus_snapshot_id} with ${snapshot.source_count} exact source versions.`,source_failures.length&&`${source_failures.length} discovered sources could not be used; see source_failures.`,answeredFromStore&&`${answeredFromStore} claims used a stored primary source no older than ${effectivePolicy.reuse_max_age_days} days and were not searched on the web, so a newer source would not have been found.`,groupsTotal>searched&&`${groupsTotal-searched} of ${groupsTotal} claim groups were not searched because of max_external_queries.`].filter(Boolean).join(' ');
       const { rows: [completed] } = await this.pool.query(`UPDATE discovery_runs SET status='COMPLETE',warehouse_candidates=$2,external_candidates=$3,primary_sources_acquired=$4,coverage_notes=$5,source_failures=$6,completed_at=now() WHERE discovery_run_id=$1 RETURNING *`, [run.discovery_run_id, warehouseCount, externalCount, acquiredCount, notes, source_failures.length]);
       return { run: completed, snapshot, source_failures };
     } catch (error) {
@@ -59,6 +62,15 @@ export class DiscoveryService {
   }
 
   async estimate(projectId,articleVersionId,policy={}){const{rows:assertions}=await this.pool.query('SELECT * FROM assertions WHERE project_id=$1 AND article_version_id=$2 ORDER BY load_bearing DESC,start_offset',[projectId,articleVersionId]);if(!assertions.length)throw new Error('Extract assertions before estimating discovery');return{model:this.model,...estimateDiscoveryUsage(assertions,{maxGroupSize:policy.max_group_size??8,similarityThreshold:policy.similarity_threshold??.42,max_external_queries:policy.max_external_queries??40})}}
+
+  // A web search is skipped only when a recent stored primary source has one passage holding most of the claim's words.
+  async storedPrimaryCovers(assertion, warehouse, maxAgeDays) {
+    const oldest = Date.now() - Number(maxAgeDays) * 86400000;
+    const recent = Number(maxAgeDays) > 0 ? warehouse.filter(s => s.authority_tier === 'PRIMARY' && s.retrieved_at && new Date(s.retrieved_at).getTime() >= oldest) : [];
+    if (!recent.length) return false;
+    const { rows } = await this.pool.query('SELECT DISTINCT passage_text,sequence_number FROM evidence_passages WHERE source_id=ANY($1::uuid[])', [recent.map(s => s.source_id)]);
+    return (rankPassages(assertion.assertion_text, rows, 1)[0]?.retrieval_score || 0) >= STORED_SOURCE_COVERAGE;
+  }
 
   async warehouseCandidates(assertion) {
     const terms = assertion.normalized_proposition.toLowerCase().split(/[^a-z0-9]+/).filter(t=>t.length>=5).slice(0,8);
@@ -72,8 +84,8 @@ export class DiscoveryService {
         SELECT source_id FROM sources WHERE lower(coalesce(title,'')) LIKE ANY($1::text[]) OR lower(coalesce(canonical_identity,'')) LIKE ANY($1::text[])
         UNION SELECT source_id FROM source_text_chunks WHERE lower(coalesce(passage_text,'')) LIKE ANY($1::text[])
         UNION SELECT source_id FROM evidence_passages WHERE lower(passage_text) LIKE ANY($1::text[]))
-      SELECT s.* FROM sources s WHERE s.retrieval_status IN('ACQUIRED','NORMALIZED') AND s.source_id IN (SELECT source_id FROM hits) AND s.canonical_url NOT LIKE $2
-      ORDER BY s.last_freshness_checked_at DESC NULLS LAST,s.retrieved_at DESC LIMIT 10`, [patterns,`${LOCAL_SOURCE_PREFIX}%`]);
+      SELECT s.* FROM sources s WHERE s.retrieval_status IN('ACQUIRED','NORMALIZED') AND s.source_id IN (SELECT source_id FROM hits) AND (s.canonical_url NOT LIKE $2 OR s.canonical_url LIKE $3)
+      ORDER BY s.last_freshness_checked_at DESC NULLS LAST,s.retrieved_at DESC LIMIT 10`, [patterns,`${LOCAL_SOURCE_PREFIX}%`,`${LOCAL_SOURCE_PREFIX}shared/%`]);
     return rows;
   }
 
@@ -133,7 +145,7 @@ ${JSON.stringify(this.discoveryRequest(assertions,policy))}`,tools:[{type:'web_s
     await this.pool.query(`INSERT INTO discovery_candidates(discovery_run_id,assertion_id,source_id,candidate_url,candidate_title,issuing_authority,proposed_source_type,proposed_authority_tier,relationship_type,disposition,disposition_reason,rank_score)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,'SUPPORTS','ACCEPTED','Reused from content-addressed warehouse; currency still represented explicitly.',1)`,[runId,assertion.assertion_id,source.source_id,source.canonical_url,source.title,source.issuing_authority,source.source_type,source.authority_tier]);
     // The class follows the tier a discovery model gave this source earlier; a source nobody assessed falls back to SECONDARY.
-    await this.pool.query(`INSERT INTO assertion_source_relationships(assertion_id,source_id,relationship_type,proposition_source_class,classification_reason,discovery_only,class_assigned_by) VALUES($1,$2,'SUPPORTS',$3,'Warehouse candidate selected for proposition-specific verification.',false,$4) ON CONFLICT DO NOTHING`,[assertion.assertion_id,source.source_id,source.authority_tier==='PRIMARY'?'PRIMARY':'SECONDARY',source.authority_tier&&source.authority_tier!=='UNASSESSED'?'MODEL':'DEFAULT']);
+    await this.pool.query(`INSERT INTO assertion_source_relationships(assertion_id,source_id,relationship_type,proposition_source_class,classification_reason,discovery_only,class_assigned_by) VALUES($1,$2,'SUPPORTS',$3,'Warehouse candidate selected for proposition-specific verification.',false,$4) ON CONFLICT DO NOTHING`,[assertion.assertion_id,source.source_id,source.authority_tier==='PRIMARY'?'PRIMARY':'SECONDARY',source.provenance?.authority_assigned_by==='CALLER'?'CALLER':source.authority_tier&&source.authority_tier!=='UNASSESSED'?'MODEL':'DEFAULT']);
   }
 
   async acquireCandidate(projectId, runId, queryId, assertion, candidate) {

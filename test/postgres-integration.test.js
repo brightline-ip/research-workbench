@@ -278,7 +278,7 @@ test('a database at migration 15 upgrades; an old sealed project reads honestly 
     await pool.query(`INSERT INTO discovery_candidates(discovery_run_id,assertion_id,candidate_url,disposition,disposition_reason) VALUES($1,$2,'https://example.test/failed','ACQUISITION_FAILED','connect ECONNREFUSED 10.0.0.5:5432 at /private/path')`, [discovery.discovery_run_id, old.assertion.assertion_id]);
 
     await Promise.all([migrate(pool), migrate(pool)]);
-    assert.equal((await pool.query('SELECT count(*)::int n FROM schema_migrations')).rows[0].n, 16);
+    assert.equal((await pool.query('SELECT count(*)::int n FROM schema_migrations')).rows[0].n, 17);
 
     const workspace = await w.repo.getWorkspace(old.id), [shown] = workspace.verification_results;
     assert.equal(shown.status, 'UNVERIFIABLE'); assert.equal(shown.not_checked_reason, 'OLDER_RUN'); assert.equal(shown.original_status, 'UNSUPPORTED'); assert.match(shown.material_gap, /^Nothing was checked/);

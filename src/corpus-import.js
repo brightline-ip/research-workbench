@@ -61,14 +61,16 @@ export class CorpusImportService {
     const normalizedKey=normalizedHash?`corpus/${documentId.slice(0,2)}/${documentId}/normalized/${normalizedHash}.txt`:null;
     await this.#write(originalKey,original);if(normalizedKey)await this.#write(normalizedKey,normalized);
     const origin=Array.isArray(metadata.origins)?metadata.origins.find(item=>item?.source_url||item?.url):null;
-    const canonicalUrl=input.local_source===true?`${LOCAL_SOURCE_PREFIX}${collection}/${documentId}`:origin?.source_url||origin?.url;
+    // `shared` means the user kept the file for later projects. Without it, the file belongs to this project alone.
+    const canonicalUrl=input.local_source===true?`${LOCAL_SOURCE_PREFIX}${input.shared===true?'shared/':''}${collection}/${documentId}`:origin?.source_url||origin?.url;
+    const authorityTier=['PRIMARY','SECONDARY'].includes(input.authority_tier)?input.authority_tier:null;
     if(!canonicalUrl)throw controlled('Source Corpus metadata has no canonical source URL',409);
     return this.repository.importCorpusSource(projectId,{
       canonical_url:canonicalUrl,title:input.title||metadata.title||null,source_type:input.source_type||'OTHER',issuing_authority:input.issuing_authority||null,
       jurisdiction:input.jurisdiction||null,publication_date:input.publication_date||null,version_label:input.version_label||null,
       content_hash:documentId,normalized_content_hash:normalizedHash,original_storage_path:originalKey,normalized_storage_path:normalizedKey,
       media_type:metadata.media_type||metadata.mime_type||'application/octet-stream',byte_length:original.length,retrieval_status:normalizedKey?'NORMALIZED':'ACQUIRED',
-      provenance:{retrieval_method:'SOURCE_CORPUS',collection,document_id:documentId,normalized_content_hash:normalizedHash,normalized_hash_checked_against_corpus:Boolean(normalizedHash&&corpusNormalizedHash),corpus_status:metadata.status||null,normalization_manifest:metadata.manifest||null,extraction_warnings:metadata.manifest?.warnings||metadata.warnings||[]},
+      authority_tier:authorityTier,provenance:{retrieval_method:'SOURCE_CORPUS',authority_assigned_by:authorityTier?'CALLER':null,collection,document_id:documentId,normalized_content_hash:normalizedHash,normalized_hash_checked_against_corpus:Boolean(normalizedHash&&corpusNormalizedHash),corpus_status:metadata.status||null,normalization_manifest:metadata.manifest||null,extraction_warnings:metadata.manifest?.warnings||metadata.warnings||[]},
       assertion_links:input.assertion_links,
     });
   }

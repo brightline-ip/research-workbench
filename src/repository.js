@@ -1,5 +1,6 @@
 import { assertRevisionContract } from './contracts.js';
-import { revisionFindings } from './revision-policy.js';
+import { ownerDecisionProblem, revisionFindings } from './revision-policy.js';
+import { LOCAL_SOURCE_PREFIX } from './corpus-import.js';
 import { displayResult, needsAttention } from '../public/report-model.js';
 import { currentComparisons } from './adversarial.js';
 import crypto from 'node:crypto';
@@ -8,6 +9,9 @@ import { canonicalizeUrl } from './source-acquisition.js';
 import { DISCOVERY_FAILURES_SQL, readableDiscoveryFailures } from './evidence-store.js';
 
 const hash = (text) => crypto.createHash('sha256').update(text).digest('hex');
+
+// The same statement, whatever its spacing or capitals.
+const authorClaimHash=text=>crypto.createHash('sha256').update(String(text||'').toLowerCase().replace(/\s+/g,' ').trim()).digest('hex');
 
 export class Repository {
   constructor(pool) { this.pool = pool; }
@@ -177,7 +181,9 @@ export class Repository {
           const values = [projectId, articleVersionId, run.extraction_run_id, item.block_index, item.start_offset, item.end_offset, item.evidence_span, item.assertion_text, item.normalized_proposition, item.assertion_class, item.load_bearing, item.load_bearing_reason, item.citation_as_written, item.source_required, item.primary_source_required, item.assertion_fingerprint];
           const { rows: [saved] } = await client.query(`INSERT INTO assertions(project_id,article_version_id,extraction_run_id,block_index,start_offset,end_offset,evidence_span,assertion_text,normalized_proposition,assertion_class,load_bearing,load_bearing_reason,citation_as_written,source_required,primary_source_required,assertion_fingerprint)
             VALUES (${values.map((_, i) => `$${i + 1}`).join(',')}) RETURNING *`, values);
-          assertions.push(saved);
+          // The author said earlier that this exact statement is their own claim, so it is not looked up again.
+          const { rows: [own] } = await client.query(`UPDATE assertions SET source_required=false,primary_source_required=false,verification_scope='EXCLUDED',scope_reason=(SELECT reason FROM author_claims WHERE project_id=$1 AND claim_hash=$3),reviewed_at=now() WHERE assertion_id=$2 AND EXISTS(SELECT 1 FROM author_claims WHERE project_id=$1 AND claim_hash=$3) RETURNING *`, [projectId, saved.assertion_id, authorClaimHash(item.evidence_span)]);
+          assertions.push(own || saved);
         }
         const { rows: [completed] } = await client.query(`UPDATE assertion_extraction_runs SET status='COMPLETE',coverage_complete=$2,coverage_notes=$3,assertion_count=$4,provider_response_id=$5,completed_at=now() WHERE extraction_run_id=$1 RETURNING *`, [run.extraction_run_id, extraction.coverage_complete, extraction.coverage_notes, assertions.length, extraction.provider_response_id || null]);
         await client.query('COMMIT');
@@ -244,6 +250,14 @@ export class Repository {
     }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}finally{client.release()}
   }
 
+  // Marks statements as the author's own claims: later extractions in this project record them as needing no source.
+  async addAuthorClaims(projectId,articleVersionId,assertionIds,reason){
+    const {rows}=await this.pool.query('SELECT assertion_id,evidence_span,assertion_text FROM assertions WHERE project_id=$1 AND article_version_id=$2 AND assertion_id=ANY($3::uuid[])',[projectId,articleVersionId,assertionIds]);
+    if(rows.length!==new Set(assertionIds).size)throw Object.assign(new Error('A claim does not belong to this article version.'),{statusCode:404,publicMessage:'A claim does not belong to this article version.'});
+    for(const row of rows)await this.pool.query(`INSERT INTO author_claims(project_id,claim_hash,claim_text,reason) VALUES($1,$2,$3,$4) ON CONFLICT(project_id,claim_hash) DO UPDATE SET reason=EXCLUDED.reason`,[projectId,authorClaimHash(row.evidence_span||row.assertion_text),row.assertion_text,reason]);
+    return {recorded:rows.length};
+  }
+
   async importCorpusSource(projectId,input){
     const canonicalUrl=canonicalizeUrl(input.canonical_url),client=await this.pool.connect();
     const validTypes=new Set(['STATUTE','REGULATION','JUDICIAL_OPINION','AGENCY_DOCUMENT','GOVERNMENT_DATASET','PATENT','SEC_FILING','ACADEMIC','NEWS','WEB_PAGE','OTHER']);
@@ -253,6 +267,7 @@ export class Repository {
       let source;
       if(found){({rows:[source]}=await client.query(`UPDATE sources SET title=COALESCE($2,title),source_type=$3,issuing_authority=COALESCE($4,issuing_authority),jurisdiction=COALESCE($5,jurisdiction),publication_date=COALESCE($6,publication_date),version_label=COALESCE($7,version_label),canonical_identity=COALESCE($8,canonical_identity),retrieval_status=$9,retrieved_at=now(),final_url=$10,media_type=$11,byte_length=$12,content_hash=$13,original_storage_path=$14,normalized_storage_path=$15,provenance=$16,updated_at=now() WHERE source_id=$1 RETURNING *`,[found.source_id,input.title||null,validTypes.has(input.source_type)?input.source_type:'OTHER',input.issuing_authority||null,input.jurisdiction||null,input.publication_date||null,input.version_label||null,input.content_hash,input.retrieval_status,canonicalUrl,input.media_type,input.byte_length,input.content_hash,input.original_storage_path,input.normalized_storage_path,input.provenance]))}
       else {({rows:[source]}=await client.query(`INSERT INTO sources(canonical_url,title,source_type,issuing_authority,jurisdiction,publication_date,version_label,canonical_identity,retrieval_status,retrieved_at,final_url,media_type,byte_length,content_hash,original_storage_path,normalized_storage_path,provenance) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now(),$1,$10,$11,$12,$13,$14,$15) RETURNING *`,[canonicalUrl,input.title||null,validTypes.has(input.source_type)?input.source_type:'OTHER',input.issuing_authority||null,input.jurisdiction||null,input.publication_date||null,input.version_label||null,input.content_hash,input.retrieval_status,input.media_type,input.byte_length,input.content_hash,input.original_storage_path,input.normalized_storage_path,input.provenance]))}
+      if(input.authority_tier)({rows:[source]}=await client.query('UPDATE sources SET authority_tier=$2,canonical_url=CASE WHEN canonical_url LIKE $3 THEN $4 ELSE canonical_url END WHERE source_id=$1 RETURNING *',[source.source_id,input.authority_tier,`${LOCAL_SOURCE_PREFIX}%`,canonicalUrl]));
       await client.query("INSERT INTO project_sources(project_id,source_id,membership_status) VALUES($1,$2,'ACCEPTED') ON CONFLICT(project_id,source_id) DO UPDATE SET membership_status='ACCEPTED'",[projectId,source.source_id]);
       for(const link of input.assertion_links){if(!validRelationships.has(link.relationship_type)||!validClasses.has(link.proposition_source_class)||!link.classification_reason?.trim())throw Object.assign(new Error('Invalid assertion link classification'),{statusCode:400});const result=await client.query(`INSERT INTO assertion_source_relationships(assertion_id,source_id,relationship_type,proposition_source_class,classification_reason,discovery_only,class_assigned_by)
         SELECT assertion_id,$2,$3,$4,$5,false,'CALLER' FROM assertions WHERE assertion_id=$1 AND project_id=$6
@@ -306,7 +321,7 @@ export class Repository {
     }
   }
 
-  async reviseArticle(projectId, articleVersionId, verificationRunId, instruction, orchestrator, modelName=null) {
+  async reviseArticle(projectId, articleVersionId, verificationRunId, instruction, orchestrator, modelName=null, claimDecisions=[]) {
     const conflict=message=>Object.assign(new Error(message),{statusCode:409,publicMessage:message});
     const {rows:[context]}=await this.pool.query(`SELECT av.*,vr.status AS verification_status,vr.mode AS verification_mode
       FROM article_versions av JOIN verification_runs vr ON vr.article_version_id=av.article_version_id
@@ -318,7 +333,7 @@ export class Repository {
     const {rows:results}=await this.pool.query(`SELECT vr.*,COALESCE(sv.metadata->>'canonical_url',s.canonical_url) AS canonical_url,COALESCE(sv.metadata->>'title',s.title) AS source_title
       FROM verification_results vr LEFT JOIN sources s USING(source_id) LEFT JOIN evidence_passages ep USING(evidence_passage_id) LEFT JOIN source_versions sv ON sv.source_version_id=ep.source_version_id WHERE verification_run_id=$1 ORDER BY vr.created_at`,[verificationRunId]);
     const {rows:assertions}=await this.pool.query('SELECT * FROM assertions WHERE article_version_id=$1',[articleVersionId]);
-    const actionable=revisionFindings(assertions,results);
+    const actionable=revisionFindings(assertions,results,claimDecisions);
     if(!actionable.length)throw conflict('There are no actionable verification findings to fix. A claim where nothing was compared is a gap in the check, not a finding, so it is left as written.');
     let run;
     try {
@@ -334,6 +349,8 @@ export class Repository {
         verification_results:actionable,instruction,
       }),actionable.map(result=>result.verification_result_id));
       if(output.applied_verification_result_ids.length&&output.content_markdown===context.content_markdown)throw new Error('The model reported changes but returned an unchanged draft.');
+      const ignored=ownerDecisionProblem(actionable,output);
+      if(ignored)throw conflict(ignored);
       const byResult=new Map(actionable.map(result=>[result.verification_result_id,result]));
       const decisions=output.issue_resolutions.map(item=>({...item,
         original_assertion:byResult.get(item.verification_result_id).assertion_as_made,

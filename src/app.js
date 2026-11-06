@@ -1,4 +1,7 @@
 import { isPermanentProviderFailure } from './safety.js';
+import { OWNER_DECISIONS } from './revision-policy.js';
+
+const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -88,7 +91,7 @@ export function createHandler(repository, orchestrator, sourceServices = {}) {
         if (activeProjects.size>=3) { operationKey=null; return send(res,429,{error:'Workbench is busy. Try again after an active operation finishes.'}); }
         activeProjects.add(operationKey);
       }
-      const match = url.pathname.match(/^\/api\/projects\/([0-9a-f-]+)(?:\/(draft|checkpoint|import|assertions|assertions-review|corpus-import|discovery-estimate|discover|verify|adversarial|revise|datasets|exports|normalize-sources))?$/i);
+      const match = url.pathname.match(/^\/api\/projects\/([0-9a-f-]+)(?:\/(draft|checkpoint|import|assertions|assertions-review|corpus-import|author-claims|discovery-estimate|discover|verify|adversarial|revise|datasets|exports|normalize-sources))?$/i);
       if(req.method==='POST'&&sourceServices.operationLimits){
         await sourceServices.operationLimits.checkStorage();
         const paid=url.pathname.match(/^\/api\/projects\/([0-9a-f-]+)\/(draft|assertions|corpus-import|discover|verify|adversarial|revise|sources)$/i);
@@ -158,7 +161,14 @@ export function createHandler(repository, orchestrator, sourceServices = {}) {
       }
       if(match&&req.method==='POST'&&match[2]==='revise'){
         const body=await readJson(req);if(!body.article_version_id||!body.verification_run_id)return send(res,400,{error:'article_version_id and verification_run_id are required'});
-        const result=await repository.reviseArticle(match[1],body.article_version_id,body.verification_run_id,body.instruction||'Address every actionable finding while preserving the draft. Mark issues that still need evidence or review.',orchestrator,process.env.REVISION_MODEL||process.env.OPENAI_MODEL||null);return result?send(res,201,result):send(res,404,{error:'revision context not found'});
+        const decisions=body.claim_decisions??[];
+        if(!Array.isArray(decisions)||decisions.length>500||decisions.some(d=>!UUID.test(String(d?.assertion_id))||!OWNER_DECISIONS.includes(d?.decision)))return send(res,400,{error:'claim_decisions must list assertion_id and a decision of NEEDS_EVIDENCE or REMOVE'});
+        const result=await repository.reviseArticle(match[1],body.article_version_id,body.verification_run_id,body.instruction||'Address every actionable finding while preserving the draft. Mark issues that still need evidence or review.',orchestrator,process.env.REVISION_MODEL||process.env.OPENAI_MODEL||null,decisions);return result?send(res,201,result):send(res,404,{error:'revision context not found'});
+      }
+      if(match&&req.method==='POST'&&match[2]==='author-claims'){
+        const body=await readJson(req);const ids=body.assertion_ids;
+        if(!UUID.test(String(body.article_version_id))||!Array.isArray(ids)||!ids.length||ids.length>500||ids.some(id=>!UUID.test(String(id))))return send(res,400,{error:'article_version_id and 1 to 500 assertion_ids are required'});
+        return send(res,201,await repository.addAuthorClaims(match[1],body.article_version_id,ids,String(body.reason||'The author said this is their own claim.').slice(0,500)));
       }
       if(match&&req.method==='POST'&&match[2]==='datasets'){
         if(!sourceServices.analysisService)return send(res,503,{error:'analysis is unavailable'});const body=await readJson(req);if(!body.title||!Array.isArray(body.records))return send(res,400,{error:'title and records are required'});return send(res,201,await sourceServices.analysisService.createDataset(match[1],body));
