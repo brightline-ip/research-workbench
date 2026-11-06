@@ -1,4 +1,4 @@
-import { EvidenceStore, DISCOVERY_FAILURES_SQL } from './evidence-store.js';
+import { EvidenceStore, DISCOVERY_FAILURES_SQL, readableDiscoveryFailures, sourceFailureReason } from './evidence-store.js';
 import { fetchJson } from './safety.js';
 import { requiresExternalEvidence } from '../public/report-model.js';
 import { planDiscoveryGroups,estimateDiscoveryUsage } from './discovery-plan.js';
@@ -11,16 +11,7 @@ const DISCOVERY_SCHEMA = { type:'object', additionalProperties:false, required:[
     canonical_url:{type:'string'}, title:{type:'string'}, issuing_authority:{type:'string'}, source_type:{type:'string',enum:[...validTypes]},
     authority_tier:{type:'string',enum:['PRIMARY','OFFICIAL_SECONDARY','SECONDARY','DISCOVERY_ONLY']}, relationship_type:{type:'string',enum:[...validRelationships]}, reason:{type:'string'} } } },
   coverage_notes:{type:'string'} } };
-// Stored and shown to callers, so only this fixed wording, never a raw exception.
-export function sourceFailureReason(error) {
-  const message = String(error?.message || '');
-  if (/^Source returned HTTP \d{3}$/.test(message)) return message;
-  if (/private network|Only credential-free/.test(message)) return 'Blocked: the address is not a public HTTP(S) source.';
-  if (/byte limit/.test(message)) return 'The source exceeds the 25 MB download limit.';
-  if (/redirect/i.test(message)) return 'The source redirected too many times or without a target.';
-  if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return 'The download timed out.';
-  return 'The source could not be downloaded.';
-}
+export { sourceFailureReason };
 
 const DISCOVERY_INSTRUCTION = 'You discover authoritative evidence for the listed atomic propositions. Use web search; never answer from memory. Search broadly enough to locate the actual primary instrument. Prefer official issuing-body, court, legislature, regulator, government dataset, patent-office, or original-publication URLs. Secondary sources may be returned only as discovery leads. Never treat a search snippet as evidence. Follow discovery_objective and never return a URL listed in excluded_source_urls. Return at most 8 candidates with real URLs you found by searching, and coverage_notes describing gaps.';
 
@@ -56,7 +47,7 @@ export class DiscoveryService {
         await this.pool.query(`UPDATE discovery_runs SET external_candidates=$2,primary_sources_acquired=$3,coverage_notes=$4 WHERE discovery_run_id=$1`,[run.discovery_run_id,externalCount,acquiredCount,`External query ${searched} of at most ${Math.min(groups.length,effectivePolicy.max_external_queries)}; ${group.assertions.length} related assertions processed together.`]);
       }
       const snapshot = await this.sealSnapshot(projectId, articleVersionId, run.discovery_run_id, effectivePolicy);
-      const { rows: source_failures } = await this.pool.query(DISCOVERY_FAILURES_SQL,[run.discovery_run_id]);
+      const source_failures = readableDiscoveryFailures((await this.pool.query(DISCOVERY_FAILURES_SQL,[run.discovery_run_id])).rows);
       const notes=[`Sealed corpus snapshot ${snapshot.corpus_snapshot_id} with ${snapshot.source_count} exact source versions.`,source_failures.length&&`${source_failures.length} discovered sources could not be used; see source_failures.`,groupsTotal>searched&&`${groupsTotal-searched} of ${groupsTotal} claim groups were not searched because of max_external_queries.`].filter(Boolean).join(' ');
       const { rows: [completed] } = await this.pool.query(`UPDATE discovery_runs SET status='COMPLETE',warehouse_candidates=$2,external_candidates=$3,primary_sources_acquired=$4,coverage_notes=$5,source_failures=$6,completed_at=now() WHERE discovery_run_id=$1 RETURNING *`, [run.discovery_run_id, warehouseCount, externalCount, acquiredCount, notes, source_failures.length]);
       return { run: completed, snapshot, source_failures };

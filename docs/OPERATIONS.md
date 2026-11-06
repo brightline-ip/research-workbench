@@ -84,18 +84,22 @@ add `--yes` to delete permanently (inside Docker: `docker compose exec app node 
 Rows are removed in one transaction: articles, claims, runs, results, sealed passages and snapshots, reviews, exports,
 and idempotency records for that project. The project's report folder, and the stored files of deleted sources, are
 removed after the commit. Make a backup first (see above). It refuses while a run on that project is still marked
-running; if the app stopped mid-run, start it once so interrupted runs are closed.
+running; if the app stopped mid-run, start it once so interrupted runs are closed. Stop work on the project before
+deleting it: that check sees only runs marked running, so do not start a run, add a source or import a document while
+the command runs, because a download still in progress can leave a stored file behind.
 
 Sources live in a shared, content-addressed warehouse. A source this project used and no other project refers to is
 deleted too, with its stored files, because discovery would otherwise offer it to later projects. A source another
-project refers to is kept unchanged, so that project's sealed evidence stays valid. Two things can remain on a kept
+project refers to is kept unchanged, so that project's sealed evidence stays valid. Referring includes a discovery
+candidate, an access attempt or another source that names it as its replacement. Two things can remain on a kept
 source: its title and URL, and the discovery model's reason for proposing it (`freshness_evidence`), which may echo a
 claim from the deleted project. The daily usage counters hold totals only. If a stored file cannot be removed, the
 command names it and exits non-zero; the database delete has already committed, so remove the file by hand.
 
 Sealed evidence stays immutable for everything else. Migration 016 lets the protection triggers pass only for rows of
-the project named in this command's own transaction. This guards against mistakes in application code, not against a
-database owner, who can always drop a trigger.
+the project named in this command's own transaction. A source version belongs to no single project, so it passes only
+if the named project refers to its source, and a snapshot still using it refuses the delete. This guards against
+mistakes in application code, not against a database owner, who can always drop a trigger.
 
 ## Database roles
 

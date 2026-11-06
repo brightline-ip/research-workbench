@@ -8,6 +8,17 @@ export function wasNotChecked(result) {
   return result?.status === 'UNVERIFIABLE' && /^Verification output failed evidence validation: Provider request failed/.test(result.material_gap || '');
 }
 
+// Older runs that found no eligible passage sent nothing to a model and still saved a verdict in one of these fixed wordings.
+const OLDER_NOTHING_COMPARED = {
+  UNSUPPORTED: 'Adequate support meeting the claim source requirements is absent from the approved corpus.',
+  UNVERIFIABLE: 'Evidence access or normalization was insufficient for a substantive determination.',
+};
+export function wasNothingCompared(result) {
+  const wording = OLDER_NOTHING_COMPARED[result?.status];
+  return Boolean(wording) && result.material_gap === wording && !result.source_id && !result.passage_id && !result.evidence_passage_id && !result.provider_response_id && result.candidate_passage_count == null;
+}
+
+// The one rule for older results, used by the workspace API, page, exports, comparison and Fix draft. Stored rows stay as saved.
 export function displayResult(assertion, result) {
   if (!result) return null;
   if (wasNotChecked(result)) {
@@ -25,6 +36,14 @@ export function displayResult(assertion, result) {
       source_actually_establishes: 'External verification does not apply under the recorded classification.',
     };
   }
+  if (wasNothingCompared(result)) {
+    return {
+      ...result, status: 'UNVERIFIABLE', original_status: result.status, not_checked_reason: 'OLDER_RUN',
+      source_actually_establishes: 'Nothing was checked. No passage was sent to the model, so this says nothing about whether the claim is supported.',
+      material_gap: `Nothing was checked: this older run had no eligible passage for this claim, so no model compared anything. It was saved as ${result.status} in the wording used then.`,
+      recommended_remediation: 'Run verification again. A new run records why no passage was available.',
+    };
+  }
   return result;
 }
 
@@ -34,6 +53,12 @@ export function sourceClassLabel(result) {
   return result?.source_class ? `${result.source_class} (${CLASS_ORIGIN[result.source_class_assigned_by] || CLASS_ORIGIN.UNKNOWN})` : '';
 }
 
+// Older runs counted every claim as attempted, including those with nothing to compare, and recorded no passage counts.
+export function coverageText(run, results = []) {
+  if (results.some(result => result.candidate_passage_count == null)) return `Older run: passages sent to the model were not recorded, so it is unknown how many of ${run.assertions_extracted} claims reached the model. Its count of ${run.assertions_attempted} attempted includes claims with nothing to compare`;
+  return `Passages sent to the model for ${run.assertions_attempted} of ${run.assertions_extracted} claims`;
+}
+
 export function needsAttention(result) {
   return Boolean(result && !['VERIFIED', 'NOT_APPLICABLE'].includes(result.status));
 }
@@ -41,7 +66,7 @@ export function needsAttention(result) {
 export function buildReport(assertions = [], results = []) {
   const byId = new Map(results.map(result => [result.assertion_id, result]));
   const rows = assertions.map(assertion => ({assertion, result: displayResult(assertion, byId.get(assertion.assertion_id))}));
-  const counts = {total: assertions.length, verified: 0, attention: 0, not_applicable: 0, not_checked: 0, nothing_compared: 0, pending: 0, legacy_adjusted: 0};
+  const counts = {total: assertions.length, verified: 0, attention: 0, not_applicable: 0, not_checked: 0, nothing_compared: 0, pending: 0, legacy_adjusted: 0, older_not_checked: 0};
   for (const {result} of rows) {
     if (!result) counts.pending++;
     else if (result.status === 'VERIFIED') counts.verified++;
@@ -50,6 +75,7 @@ export function buildReport(assertions = [], results = []) {
     else counts.attention++;
     if (result?.status === 'NOT_APPLICABLE' && result.original_status) counts.legacy_adjusted++;
     if (result?.not_checked_reason) counts.nothing_compared++;
+    if (result?.not_checked_reason === 'OLDER_RUN') counts.older_not_checked++;
   }
   // Concrete discrepancies first, then missing evidence; load-bearing items lead within each group.
   const priority = {CONTRADICTED: 0, FABRICATED: 0, MISCITED: 1, OVERSTATED: 1, STALE: 1, UNSUPPORTED: 2, UNVERIFIABLE: 3, NOT_CHECKED: 3, VERIFIED: 4, NOT_APPLICABLE: 5};

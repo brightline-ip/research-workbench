@@ -155,7 +155,15 @@ that claim; it is neither a defect nor proof of truth. The README section "What 
   `SOURCES_UNAVAILABLE`, `NO_MATCHING_PASSAGE` (status `UNVERIFIABLE`, count 0: nothing was compared) or
   `INVALID_MODEL_REPLY` (status `UNVERIFIABLE`, count above 0: passages were sent but the reply failed validation).
 - `UNSUPPORTED` now only comes from a model that examined passages, and its `material_gap` begins
-  `Not found in the N passages retrieved`. Older rows may hold the former wording, with no comparison behind it.
+  `Not found in the N passages retrieved`.
+- Older runs saved a claim with nothing to compare as `UNSUPPORTED` or `UNVERIFIABLE` in fixed wording. The workspace
+  returns those rows as `UNVERIFIABLE` with `not_checked_reason` `OLDER_RUN` and `original_status`, and older provider
+  outages as `NOT_CHECKED`. A comparison that relied on such a row is worked out again and keeps the saved value in
+  `stored_comparison_status`. Stored rows are unchanged, and `status_counts`, `assertions_attempted` and
+  `assertions.verification_state` stay as saved. On a run whose results have a `null` `candidate_passage_count`,
+  `assertions_attempted` counted every claim that needed a source, not claims that reached the model.
+- `discovery_failures` and `source_failures` give each `reason` in fixed wording, including for rows that hold older
+  raw error text. An `excluded_sources` entry with `SUSPECTED_ACCESS_WALL` lists the `matched_phrases`.
 - `source_class` and `source_class_assigned_by` (`MODEL`, `CALLER`, `DEFAULT`, `UNKNOWN`) describe the source of the
   passage the result relies on; both are `null` when there is none.
 - `coverage_complete` is the extraction model's own statement. When `false`, claims may be missing from the ledger;

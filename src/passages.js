@@ -16,11 +16,15 @@ export function isUnreadableText(text) {
 // Common login, paywall and bot-check pages arrive as HTTP 200 with readable text. This catches only short pages using
 // such wording; a longer wall or one worded differently still reaches the model, so read the quoted passage.
 const WALL_PHRASES=/sign[ -]?in|log[ -]?in|subscribe|subscription required|enable javascript|enable cookies|access denied|forbidden|captcha|verify you are (?:a )?human|are you a robot|checking your browser|paywall|create (?:a free |an )?account/gi;
-export function looksLikeAccessWall(text){
-  if(!text||text.length>2000)return false;
-  if(/^\s*(?:access denied|403 forbidden|forbidden|just a moment|attention required)/i.test(text))return true;
-  return new Set((text.match(WALL_PHRASES)||[]).map(phrase=>phrase.toLowerCase())).size>=2;
+// The wording that made a page look like a wall, or nothing when it does not.
+export function accessWallPhrases(text){
+  if(!text||text.length>2000)return [];
+  const found=new Set((text.match(WALL_PHRASES)||[]).map(phrase=>phrase.toLowerCase()));
+  const opening=/^\s*(access denied|403 forbidden|forbidden|just a moment|attention required)/i.exec(text);
+  if(opening)return [...found.add(opening[1].toLowerCase())];
+  return found.size>=2?[...found]:[];
 }
+export const looksLikeAccessWall=text=>accessWallPhrases(text).length>0;
 
 export function chunkNormalizedText(text, maxChars = 1800) {
   if (!Number.isInteger(maxChars) || maxChars < 1) throw new Error('Invalid passage size');

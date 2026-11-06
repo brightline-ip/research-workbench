@@ -1,10 +1,11 @@
 import { assertRevisionContract } from './contracts.js';
 import { revisionFindings } from './revision-policy.js';
 import { displayResult, needsAttention } from '../public/report-model.js';
+import { currentComparisons } from './adversarial.js';
 import crypto from 'node:crypto';
 import { articleBlocks, locateAssertions } from './article-locations.js';
 import { canonicalizeUrl } from './source-acquisition.js';
-import { DISCOVERY_FAILURES_SQL } from './evidence-store.js';
+import { DISCOVERY_FAILURES_SQL, readableDiscoveryFailures } from './evidence-store.js';
 
 const hash = (text) => crypto.createHash('sha256').update(text).digest('hex');
 
@@ -62,10 +63,10 @@ export class Repository {
     ]);
     const {rows:[adversarial_run]}=await this.pool.query(`SELECT ar.* FROM adversarial_runs ar JOIN article_versions av USING(article_version_id) WHERE ar.project_id=$1 AND av.version_number=(SELECT max(version_number) FROM article_versions WHERE project_id=$1) ORDER BY ar.created_at DESC LIMIT 1`,[projectId]);
     let adversarial_comparisons=[],red_team_run=null,red_team_findings=[],reconciliation_run=null;
-    if(adversarial_run){({rows:adversarial_comparisons}=await this.pool.query('SELECT * FROM adversarial_comparisons WHERE adversarial_run_id=$1 ORDER BY materiality DESC,created_at',[adversarial_run.adversarial_run_id]));({rows:[red_team_run]}=await this.pool.query('SELECT * FROM red_team_runs WHERE adversarial_run_id=$1 ORDER BY created_at DESC LIMIT 1',[adversarial_run.adversarial_run_id]));if(red_team_run)({rows:red_team_findings}=await this.pool.query('SELECT * FROM red_team_findings WHERE red_team_run_id=$1 ORDER BY severity DESC,created_at',[red_team_run.red_team_run_id]));({rows:[reconciliation_run]}=await this.pool.query('SELECT * FROM reconciliation_runs WHERE adversarial_run_id=$1 ORDER BY created_at DESC LIMIT 1',[adversarial_run.adversarial_run_id]))}
+    if(adversarial_run){({rows:adversarial_comparisons}=await this.pool.query('SELECT * FROM adversarial_comparisons WHERE adversarial_run_id=$1 ORDER BY materiality DESC,created_at',[adversarial_run.adversarial_run_id]));const compared=adversarial_comparisons.flatMap(c=>[c.author_result_id,c.independent_result_id]).filter(Boolean);adversarial_comparisons=currentComparisons(adversarial_comparisons,assertions,(await this.pool.query('SELECT * FROM verification_results WHERE verification_result_id=ANY($1::uuid[])',[compared])).rows);({rows:[red_team_run]}=await this.pool.query('SELECT * FROM red_team_runs WHERE adversarial_run_id=$1 ORDER BY created_at DESC LIMIT 1',[adversarial_run.adversarial_run_id]));if(red_team_run)({rows:red_team_findings}=await this.pool.query('SELECT * FROM red_team_findings WHERE red_team_run_id=$1 ORDER BY severity DESC,created_at',[red_team_run.red_team_run_id]));({rows:[reconciliation_run]}=await this.pool.query('SELECT * FROM reconciliation_runs WHERE adversarial_run_id=$1 ORDER BY created_at DESC LIMIT 1',[adversarial_run.adversarial_run_id]))}
     const {rows:[revision_run]}=await this.pool.query(`SELECT rr.*, original.version_number AS source_version_number, original.content_markdown AS original_content_markdown, revised.version_number AS output_version_number, revised.content_markdown AS revised_content_markdown FROM revision_runs rr JOIN article_versions original ON original.article_version_id=rr.source_article_version_id LEFT JOIN article_versions revised ON revised.article_version_id=rr.output_article_version_id WHERE rr.project_id=$1 ORDER BY rr.created_at DESC LIMIT 1`,[projectId]);
     const {rows:discovery_failures}=discovery_run?await this.pool.query(DISCOVERY_FAILURES_SQL,[discovery_run.discovery_run_id]):{rows:[]};
-    return { project, articles, messages, assertions, assertion_extraction: assertion_extraction || null, sources, discovery_run: discovery_run || null, discovery_failures, corpus_snapshot: corpus_snapshot || null, verification_run: verification_run || null, verification_results,adversarial_run:adversarial_run||null,adversarial_comparisons,red_team_run:red_team_run||null,red_team_findings,reconciliation_run:reconciliation_run||null, revision_run:revision_run||null, artifacts };
+    return { project, articles, messages, assertions, assertion_extraction: assertion_extraction || null, sources, discovery_run: discovery_run || null, discovery_failures:readableDiscoveryFailures(discovery_failures), corpus_snapshot: corpus_snapshot || null, verification_run: verification_run || null, verification_results:verification_results.map(result=>displayResult(assertions.find(a=>a.assertion_id===result.assertion_id),result)),adversarial_run:adversarial_run||null,adversarial_comparisons,red_team_run:red_team_run||null,red_team_findings,reconciliation_run:reconciliation_run||null, revision_run:revision_run||null, artifacts };
   }
 
   async getSource(projectId, sourceId) {

@@ -1,12 +1,38 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { chunkNormalizedText, isUnreadableText, looksLikeAccessWall } from './passages.js';
+import { accessWallPhrases, chunkNormalizedText, isUnreadableText } from './passages.js';
 import { writeStoredFile } from './stored-files.js';
 
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])])):value;
 export const evidenceHash=value=>crypto.createHash('sha256').update(typeof value==='string'||Buffer.isBuffer(value)?value:JSON.stringify(canonical(value))).digest('hex');
 const conflict=message=>Object.assign(new Error(message),{statusCode:409,publicMessage:message});
+// Stored and shown to callers, so only this fixed wording, never a raw exception.
+export function sourceFailureReason(error) {
+  const message = String(error?.message || '');
+  if (/^Source returned HTTP \d{3}$/.test(message)) return message;
+  if (/private network|Only credential-free/.test(message)) return 'Blocked: the address is not a public HTTP(S) source.';
+  if (/byte limit/.test(message)) return 'The source exceeds the 25 MB download limit.';
+  if (/redirect/i.test(message)) return 'The source redirected too many times or without a target.';
+  if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return 'The download timed out.';
+  return 'The source could not be downloaded.';
+}
+const FIXED_REASONS=new Set(['Blocked: the address is not a public HTTP(S) source.','The source exceeds the 25 MB download limit.','The source redirected too many times or without a target.','The download timed out.','The source could not be downloaded.','The model proposed an address that failed URL screening; it was not fetched.','Not fetched: DISCOVERY_REQUIRE_ACCEPTANCE is on. Add the URL as a source to accept it.']);
+// Older rows hold raw exception text. On read they get the wording a new failure would get; the stored row is unchanged.
+export function storedFailureReason(reason){
+  if(!reason||FIXED_REASONS.has(reason))return reason||null;
+  return sourceFailureReason({message:reason,name:/timed? ?out|aborted/i.test(reason)?'TimeoutError':''});
+}
+// Old raw reasons can reduce to the same wording, so rows for one source are merged again after mapping.
+export function readableDiscoveryFailures(rows){
+  const merged=new Map();
+  for(const row of rows){
+    const reason=storedFailureReason(row.reason),key=JSON.stringify([row.candidate_url,row.candidate_title,row.disposition,reason]),seen=merged.get(key);
+    if(seen)seen.assertion_ids=[...new Set([...seen.assertion_ids,...row.assertion_ids])];
+    else merged.set(key,{...row,reason});
+  }
+  return [...merged.values()];
+}
 // Discovered sources that never became evidence for a claim, per discovery run.
 export const DISCOVERY_FAILURES_SQL=`SELECT candidate_url,candidate_title,disposition,disposition_reason AS reason,array_agg(DISTINCT assertion_id) AS assertion_ids FROM discovery_candidates
   WHERE discovery_run_id=$1 AND disposition IN('ACQUISITION_FAILED','HUMAN_REVIEW') GROUP BY candidate_url,candidate_title,disposition,disposition_reason ORDER BY candidate_url NULLS LAST,candidate_title`;
@@ -54,7 +80,7 @@ export class EvidenceStore {
         AND NOT EXISTS(SELECT 1 FROM discovery_candidates later WHERE later.assertion_id=d.assertion_id AND later.candidate_url=d.candidate_url AND later.disposition='ACCEPTED' AND later.created_at>d.created_at)
         ORDER BY d.assertion_id,d.candidate_url,d.candidate_title,d.created_at DESC`,[projectId,articleVersionId,discoveryRunId]);
       const versions=[],texts=new Map(),excluded=[];
-      const exclude=(source,reason)=>excluded.push({source_id:source.source_id,canonical_url:source.canonical_url,title:source.title||null,reason});
+      const exclude=(source,reason,detail={})=>excluded.push({source_id:source.source_id,canonical_url:source.canonical_url,title:source.title||null,reason,...detail});
       for(const source of sources){
         if(!source.content_hash||!source.original_storage_path){exclude(source,'NOT_ACQUIRED');continue;}
         const native=await preserve(this.root,await readEvidenceFile(this.root,source.original_storage_path,source.content_hash),'original');
@@ -63,8 +89,9 @@ export class EvidenceStore {
           const bytes=await readEvidenceFile(this.root,source.normalized_storage_path,expectedNormalizedHash(source));
           const text=bytes.toString('utf8');
           // Unusable text is left out of the snapshot, so its claims report evidence as unavailable, never unsupported by garbage.
+          const wallPhrases=accessWallPhrases(text);
           if(isUnreadableText(text))exclude(source,'UNREADABLE_TEXT');
-          else if(looksLikeAccessWall(text))exclude(source,'SUSPECTED_ACCESS_WALL');
+          else if(wallPhrases.length)exclude(source,'SUSPECTED_ACCESS_WALL',{matched_phrases:wallPhrases});
           else{normalized=await preserve(this.root,bytes,'normalized');texts.set(source.source_id,text);}
         }else exclude(source,'NO_TEXT');
         const metadata={title:source.title,canonical_url:source.canonical_url,issuing_authority:source.issuing_authority,media_type:source.media_type,source_type:source.source_type,authority_tier:source.authority_tier,freshness_status:source.freshness_status};
@@ -73,7 +100,7 @@ export class EvidenceStore {
           VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(identity_hash) DO NOTHING`,[source.source_id,identity,native.hash,normalized?.hash||null,native.key,normalized?.key||null,metadata]);
         const {rows:[version]}=await client.query('SELECT * FROM source_versions WHERE identity_hash=$1',[identity]);versions.push(version);
       }
-      const manifest={schema_version:2,passage_format:1,project_id:projectId,article_version_id:articleVersionId,article_content_hash:evidenceHash(article.content_markdown),claim_hash:claimSeal(assertions),discovery_run_id:discoveryRunId,policy,links,versions:versions.map(({created_at,...v})=>v),discovery_failures:discoveryFailures,excluded_sources:excluded};
+      const manifest={schema_version:2,passage_format:1,project_id:projectId,article_version_id:articleVersionId,article_content_hash:evidenceHash(article.content_markdown),claim_hash:claimSeal(assertions),discovery_run_id:discoveryRunId,policy,links,versions:versions.map(({created_at,...v})=>v),discovery_failures:discoveryFailures.map(f=>({...f,reason:storedFailureReason(f.reason)})),excluded_sources:excluded};
       const {rows:[snapshot]}=await client.query(`INSERT INTO corpus_snapshots(project_id,article_version_id,discovery_run_id,status,policy,manifest_hash,source_count,sealed_at,evidence_schema_version,evidence_manifest)
         VALUES($1,$2,$3,'BUILDING',$4,$5,$6,NULL,2,$7) RETURNING *`,[projectId,articleVersionId,discoveryRunId,policy,evidenceHash(manifest),versions.length,manifest]);
       for(const v of versions){

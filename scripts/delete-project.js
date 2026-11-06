@@ -22,7 +22,10 @@ const SOURCES_ONLY_HERE = `WITH mine AS (
     AND NOT EXISTS(SELECT 1 FROM assertion_source_relationships r JOIN assertions a USING(assertion_id) WHERE r.source_id=s.source_id AND a.project_id<>$1)
     AND NOT EXISTS(SELECT 1 FROM corpus_snapshot_sources css JOIN corpus_snapshots cs USING(corpus_snapshot_id) WHERE css.source_id=s.source_id AND cs.project_id<>$1)
     AND NOT EXISTS(SELECT 1 FROM evidence_passages ep JOIN corpus_snapshots cs USING(corpus_snapshot_id) WHERE ep.source_id=s.source_id AND cs.project_id<>$1)
-    AND NOT EXISTS(SELECT 1 FROM verification_results vr JOIN verification_runs v USING(verification_run_id) WHERE vr.source_id=s.source_id AND v.project_id<>$1)`;
+    AND NOT EXISTS(SELECT 1 FROM verification_results vr JOIN verification_runs v USING(verification_run_id) WHERE vr.source_id=s.source_id AND v.project_id<>$1)
+    AND NOT EXISTS(SELECT 1 FROM discovery_candidates d JOIN discovery_runs dr USING(discovery_run_id) WHERE d.source_id=s.source_id AND dr.project_id<>$1)
+    AND NOT EXISTS(SELECT 1 FROM source_access_attempts saa WHERE saa.source_id=s.source_id AND saa.project_id<>$1)
+    AND NOT EXISTS(SELECT 1 FROM sources newer WHERE newer.superseded_by_source_id=s.source_id AND newer.source_id<>s.source_id)`;
 
 // Explicit order, children first: these rows sit behind RESTRICT keys and sealed-evidence triggers that a plain cascade cannot pass.
 const DELETES = [
@@ -39,7 +42,6 @@ const DELETES = [
   // These two tables reference the project without ON DELETE CASCADE.
   'DELETE FROM checkpoint_requests WHERE project_id=$1',
   'DELETE FROM operation_requests WHERE project_id=$1',
-  'DELETE FROM projects WHERE project_id=$1',
 ];
 const RUNNING = ['assertion_extraction_runs', 'discovery_runs', 'verification_runs', 'adversarial_runs', 'revision_runs'].map(table => `SELECT 1 FROM ${table} WHERE project_id=$1 AND status='RUNNING'`).join(' UNION ALL ');
 
@@ -78,8 +80,10 @@ export async function deleteProject(pool, { projectStorageRoot, sourceStorageRoo
     const { rows: sources } = await client.query(SOURCES_ONLY_HERE, [projectId]);
     const sourceIds = sources.map(source => source.source_id);
     for (const sql of DELETES) await client.query(sql, [projectId]);
+    // Before the project row: the trigger allows a version only while this project still refers to its source (migration 016).
+    const { rows: versions } = sourceIds.length ? await client.query('DELETE FROM source_versions WHERE source_id=ANY($1::uuid[]) RETURNING original_storage_path,normalized_storage_path', [sourceIds]) : { rows: [] };
+    await client.query('DELETE FROM projects WHERE project_id=$1', [projectId]);
     if (sourceIds.length) {
-      const { rows: versions } = await client.query('DELETE FROM source_versions WHERE source_id=ANY($1::uuid[]) RETURNING original_storage_path,normalized_storage_path', [sourceIds]);
       await client.query('DELETE FROM sources WHERE source_id=ANY($1::uuid[])', [sourceIds]);
       sourcesDeleted = sourceIds.length;
       const keys = [...new Set([...sources, ...versions].flatMap(row => [row.original_storage_path, row.normalized_storage_path]).filter(Boolean))];

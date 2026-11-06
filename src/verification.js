@@ -1,4 +1,4 @@
-import { EvidenceStore } from './evidence-store.js';
+import { EvidenceStore, storedFailureReason } from './evidence-store.js';
 import { rankPassages, validateVerificationEvidence } from './passages.js';
 import { requiresExternalEvidence } from '../public/report-model.js';
 import { mapConcurrent } from './concurrency.js';
@@ -45,7 +45,7 @@ export function evidenceGaps(manifest,results){
   const discovery=new Map();
   for(const failure of manifest.discovery_failures||[]){
     const key=failure.candidate_url||`untitled:${failure.candidate_title||''}`;
-    const row=discovery.get(key)||{candidate_url:failure.candidate_url||null,candidate_title:failure.candidate_title||null,disposition:failure.disposition,reason:failure.reason||null,assertion_ids:[]};
+    const row=discovery.get(key)||{candidate_url:failure.candidate_url||null,candidate_title:failure.candidate_title||null,disposition:failure.disposition,reason:storedFailureReason(failure.reason),assertion_ids:[]};
     row.assertion_ids.push(failure.assertion_id);discovery.set(key,row);
   }
   const not_checked={};

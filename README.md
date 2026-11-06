@@ -152,6 +152,7 @@ Every status is a label on one claim, not a certification. Read the quoted passa
 | `SOURCES_UNAVAILABLE` | A qualifying source could not be read: its download failed or was blocked, it was held for review, it has no readable text, or it looks like a login or access page. |
 | `NO_MATCHING_PASSAGE` | Qualifying text exists, but no passage shares a word with the claim, so nothing went to the model. |
 | `INVALID_MODEL_REPLY` | Passages were sent, but the reply failed validation, for example a quotation that is not in the passage. |
+| `OLDER_RUN` | Display only. A run from before `not_checked_reason` existed had no eligible passage, so nothing went to the model, and it saved `UNSUPPORTED` or `UNVERIFIABLE` in fixed wording. |
 
 **`PRIMARY` and `SECONDARY` are a model's judgment unless a person set them.** A discovered source takes the label the discovery model gave it; nothing checks that label against the document. Each result records `source_class` and `source_class_assigned_by`, shown in the page and in exports: `MODEL`, `CALLER` (a person or a client program through the page or API), `DEFAULT` (a reused source nobody assessed, treated as `SECONDARY`) or `UNKNOWN` (linked before this was recorded). Whether a claim needs a primary source at all is also set by the extraction model, unless a person corrects it in claim review.
 
@@ -159,10 +160,11 @@ Every status is a label on one claim, not a certification. Read the quoted passa
 
 ## Failure reporting
 
-- If the AI provider fails during verification, the run stops and is marked FAILED with the reason. Claims not yet checked have no result. This covers HTTP errors, connection failures, and a 200 reply that is empty, refused, incomplete or not JSON. Older runs that saved such outages as UNVERIFIABLE display as NOT_CHECKED (stored data unchanged) and stay out of Fix draft.
+- If the AI provider fails during verification, the run stops and is marked FAILED with the reason. Claims not yet checked have no result. This covers HTTP errors, connection failures, and a 200 reply that is empty, refused, incomplete or not JSON. Older runs that saved such outages as UNVERIFIABLE display as NOT_CHECKED (stored data unchanged) and stay out of Fix draft. Retrying after a failed run pays again for claims already judged, because a new run starts over and calls the model for every claim that has passages.
 - A reply that is valid but contains an invalid quotation stays a per-claim UNVERIFIABLE (`INVALID_MODEL_REPLY`) in a run that completes.
 - A discovered source that could not be used is listed in the discover response (`source_failures`), in the workspace (`discovery_failures`) and on the verification run (`evidence_gaps`), and its claims follow the table above.
-- A run can be COMPLETE with nothing compared. `assertions_attempted` counts only claims whose passages were sent to the model.
+- A run can be COMPLETE with nothing compared. `assertions_attempted` counts only claims whose passages were sent to the model. Older runs counted every claim that needed a source, so where passage counts were not recorded the page says the number that reached the model is unknown.
+- Older runs saved a claim with nothing to compare as `UNSUPPORTED` or `UNVERIFIABLE`. The workspace API, page, exports and comparisons now show it as `UNVERIFIABLE` with `OLDER_RUN`, and the saved status stays visible as the original. The stored row is not rewritten, and it goes to Fix draft like any other claim with nothing compared. Red-team and reconciliation text written by those older runs is stored as it was and may still treat these claims as findings.
 - In n8n mode, `/api/readiness` asks the gateway (`/healthz`) whether it is answering. Direct OpenAI mode has no free probe and reports the credential only.
 - Temporary provider failures return HTTP 503. A rejection that retrying cannot fix (bad login, disallowed model, other 4xx) returns 500 with its reason, so scripts can stop retrying.
 - Normalized text that is gzip bytes or over 1% control characters is left out of the sealed snapshot, and its claims report evidence as unavailable. Stray NUL bytes in otherwise good text are removed from passages. Gzip sent without a header is decompressed on new downloads. Already stored unreadable sources stay unreadable until re-acquired or re-extracted.
@@ -171,6 +173,7 @@ Every status is a label on one claim, not a certification. Read the quoted passa
 
 - **PostgreSQL**: projects, article checkpoints, claims, runs, verification results, audit records, AI usage counters. Nothing is deleted automatically.
 - **`WORKBENCH_DATA_DIR`** (default `./storage`): `sources/` holds downloaded originals, normalized text and sealed content-addressed copies; `projects/` holds generated reports.
+- Where the storage folder has no hard links (exFAT, FAT, some SMB and 9p mounts), a stored file is published by a checked rename. Readers still see a complete file or none, but in the instant between the check and the rename a file with the same name can be replaced; the read afterwards reports a conflict if its bytes differ.
 - Database and files must be backed up together. See [docs/OPERATIONS.md](docs/OPERATIONS.md) for the backup/restore utility.
 
 ## Security model

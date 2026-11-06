@@ -6,12 +6,17 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
+import { pathToFileURL } from 'node:url';
 import pg from 'pg';
 import { migrate } from '../src/migrations.js';
 import { Repository } from '../src/repository.js';
 import { EvidenceStore } from '../src/evidence-store.js';
 import { VerificationService } from '../src/verification.js';
 import { deleteProject } from '../scripts/delete-project.js';
+import { AdversarialService } from '../src/adversarial.js';
+import { ExportService } from '../src/exports.js';
+import { revisionFindings } from '../src/revision-policy.js';
+import { buildReport, coverageText } from '../public/report-model.js';
 
 const url = process.env.TEST_DATABASE_URL;
 const named = url && /test/i.test(new URL(url).pathname);
@@ -177,4 +182,127 @@ test('real rows: nothing-checked results, candidate ids, source class and run ga
     assert.equal((await w.repo.getWorkspace(wall.id)).verification_results[0].not_checked_reason, 'SOURCES_UNAVAILABLE');
     for (const target of [none, checked, wall]) await deleteProject(w.pool, w.config, target.id, { confirm: true });
   } finally { await w.close(); }
+});
+
+test('source versions lose protection only for a source the named project refers to', options, async () => {
+  const w = await world();
+  try {
+    const a = await project(w, 'named'), b = await project(w, 'other');
+    const mine = await addSource(w, 'A', Buffer.from('a text')), theirs = await addSource(w, 'B', Buffer.from('b text'));
+    await link(w, a, mine); await link(w, b, theirs);
+    const version = async source => (await w.pool.query(`INSERT INTO source_versions(source_id,identity_hash,content_hash,original_storage_path,metadata) VALUES($1,$2,$3,'k','{}') RETURNING source_version_id`, [source.source_id, crypto.randomUUID(), source.content_hash])).rows[0].source_version_id;
+    const mineVersion = await version(mine), theirVersion = await version(theirs);
+    const client = await w.pool.connect();
+    const attempt = async (named, id) => {
+      await client.query('BEGIN');
+      try {
+        await client.query("SELECT set_config('rw.deleting_project',$1,true)", [named]);
+        return (await client.query('DELETE FROM source_versions WHERE source_version_id=$1', [id])).rowCount;
+      } finally { await client.query('ROLLBACK'); }
+    };
+    try {
+      await assert.rejects(attempt(a.id, theirVersion), /immutable/, 'another project keeps the protection during a delete');
+      await assert.rejects(attempt('not-a-project', mineVersion), /immutable/);
+      assert.equal(await attempt(a.id, mineVersion), 1);
+    } finally { client.release(); }
+    for (const target of [a, b]) await deleteProject(w.pool, w.config, target.id, { confirm: true });
+  } finally { await w.close(); }
+});
+
+test('a source another project uses through discovery, an access attempt or a replacement link is kept', options, async () => {
+  const w = await world();
+  try {
+    const a = await project(w, 'deleted'), b = await project(w, 'kept');
+    const { rows: [run] } = await w.pool.query(`INSERT INTO discovery_runs(project_id,article_version_id,mode,status,policy,model_name,assertions_total) VALUES($1,$2,'AUTHOR_CORPUS','COMPLETE','{}','m',1) RETURNING discovery_run_id`, [b.id, b.version]);
+    const uses = {
+      candidate: async s => { await w.pool.query(`INSERT INTO discovery_candidates(discovery_run_id,assertion_id,source_id,candidate_url,disposition) VALUES($1,$2,$3,'https://example.test/c','ACCEPTED')`, [run.discovery_run_id, b.assertion.assertion_id, s.source_id]); return async () => (await w.pool.query('SELECT source_id FROM discovery_candidates WHERE discovery_run_id=$1 AND source_id=$2', [run.discovery_run_id, s.source_id])).rowCount; },
+      attempt: async s => { await w.pool.query(`INSERT INTO source_access_attempts(project_id,source_id,canonical_url,method,result) VALUES($1,$2,'https://example.test/a','HTTP_GET','SUCCESS')`, [b.id, s.source_id]); return async () => (await w.pool.query('SELECT 1 FROM source_access_attempts WHERE project_id=$1 AND source_id=$2', [b.id, s.source_id])).rowCount; },
+      replacement: async s => { const older = await addSource(w, 'older', Buffer.from('older text')); await w.pool.query('UPDATE sources SET superseded_by_source_id=$2 WHERE source_id=$1', [older.source_id, s.source_id]); return async () => (await w.pool.query('SELECT 1 FROM sources WHERE source_id=$1 AND superseded_by_source_id=$2', [older.source_id, s.source_id])).rowCount; },
+    };
+    const kept = {};
+    for (const [kind, use] of Object.entries(uses)) {
+      const source = await addSource(w, kind, Buffer.from(`${kind} text`));
+      await link(w, a, source);
+      kept[kind] = { source, stillLinked: await use(source) };
+    }
+    const alone = await addSource(w, 'alone', Buffer.from('alone text'));
+    await link(w, a, alone);
+    const outcome = await deleteProject(w.pool, w.config, a.id, { confirm: true });
+    assert.equal(outcome.sources_deleted, 1, 'only the source nobody else uses');
+    assert.equal((await w.pool.query('SELECT 1 FROM sources WHERE source_id=$1', [alone.source_id])).rowCount, 0);
+    for (const [kind, { source, stillLinked }] of Object.entries(kept)) {
+      assert.equal((await w.pool.query('SELECT 1 FROM sources WHERE source_id=$1', [source.source_id])).rowCount, 1, kind);
+      assert.equal(await stillLinked(), 1, `${kind} keeps its link`);
+      await fs.access(path.join(w.config.sourceStorageRoot, source.original_storage_path));
+    }
+    await deleteProject(w.pool, w.config, b.id, { confirm: true });
+    await w.pool.query('DELETE FROM sources WHERE superseded_by_source_id=ANY($1::uuid[])', [Object.values(kept).map(k => k.source.source_id)]);
+    await w.pool.query('DELETE FROM sources WHERE source_id=ANY($1::uuid[])', [Object.values(kept).map(k => k.source.source_id)]);
+  } finally { await w.close(); }
+});
+
+test('a database at migration 15 upgrades; an old sealed project reads honestly and deletes cleanly', options, async t => {
+  const admin = new pg.Pool({ connectionString: url });
+  const name = `rw_test_upgrade_${crypto.randomUUID().replaceAll('-', '')}`;
+  try { await admin.query(`CREATE DATABASE ${name}`); }
+  catch (error) { await admin.end(); if (error.code === '42501') return t.skip('this role may not create a database'); throw error; }
+  const address = new URL(url); address.pathname = `/${name}`;
+  const pool = new pg.Pool({ connectionString: address.href });
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'rw-upgrade-'));
+  try {
+    const packaged = new URL('../db/migrations/', import.meta.url), at15 = path.join(dir, 'at15');
+    await fs.mkdir(at15);
+    for (const file of (await fs.readdir(packaged)).filter(file => file < '016_')) await fs.copyFile(new URL(file, packaged), path.join(at15, file));
+    await migrate(pool, pathToFileURL(at15 + path.sep));
+    assert.equal((await pool.query('SELECT count(*)::int n FROM schema_migrations')).rows[0].n, 15);
+
+    const config = { sourceStorageRoot: path.join(dir, 'sources'), projectStorageRoot: path.join(dir, 'projects') };
+    await fs.mkdir(config.sourceStorageRoot, { recursive: true });
+    const w = { pool, config, repo: new Repository(pool) };
+    const old = await project(w, 'old sealed project'), text = Buffer.from('Off topic words only.'), source = await addSource(w, 'Old', text);
+    await pool.query(`INSERT INTO project_sources(project_id,source_id,membership_status) VALUES($1,$2,'ACCEPTED')`, [old.id, source.source_id]);
+    await pool.query(`INSERT INTO assertion_source_relationships(assertion_id,source_id,relationship_type,proposition_source_class,classification_reason,discovery_only) VALUES($1,$2,'BACKGROUND','SECONDARY','old',false)`, [old.assertion.assertion_id, source.source_id]);
+    const { rows: [version] } = await pool.query(`INSERT INTO source_versions(source_id,identity_hash,content_hash,normalized_content_hash,original_storage_path,normalized_storage_path,metadata) VALUES($1,$2,$3,$4,$5,$6,'{}') RETURNING *`, [source.source_id, crypto.randomUUID(), source.content_hash, sha(text), source.original_storage_path, source.normalized_storage_path]);
+    const { rows: [snapshot] } = await pool.query(`INSERT INTO corpus_snapshots(project_id,article_version_id,status,policy,manifest_hash,source_count,evidence_schema_version,evidence_manifest) VALUES($1,$2,'BUILDING','{}','h',1,2,'{}') RETURNING *`, [old.id, old.version]);
+    await pool.query(`INSERT INTO corpus_snapshot_sources(corpus_snapshot_id,source_id,source_content_hash,authority_tier,freshness_status,source_version_id) VALUES($1,$2,$3,'SECONDARY','UNKNOWN',$4)`, [snapshot.corpus_snapshot_id, source.source_id, source.content_hash, version.source_version_id]);
+    await pool.query(`INSERT INTO evidence_passages(corpus_snapshot_id,source_version_id,source_id,sequence_number,normalized_start_offset,normalized_end_offset,locator,passage_text,passage_hash) VALUES($1,$2,$3,0,0,21,'normalized-text:0-21',$4,$5)`, [snapshot.corpus_snapshot_id, version.source_version_id, source.source_id, text.toString(), sha(text)]);
+    await pool.query(`UPDATE corpus_snapshots SET status='SEALED',sealed_at=now() WHERE corpus_snapshot_id=$1`, [snapshot.corpus_snapshot_id]);
+    const oldRun = async mode => (await pool.query(`INSERT INTO verification_runs(project_id,article_version_id,mode,status,assertions_extracted,assertions_attempted,status_counts,corpus_snapshot_id,completed_at) VALUES($1,$2,$3,'COMPLETE',1,1,'{"UNSUPPORTED":1}',$4,now()) RETURNING *`, [old.id, old.version, mode, snapshot.corpus_snapshot_id])).rows[0];
+    const gap = 'Adequate support meeting the claim source requirements is absent from the approved corpus.';
+    const oldResult = async run => (await pool.query(`INSERT INTO verification_results(verification_run_id,assertion_id,assertion_as_made,source_actually_establishes,material_gap,status,defect_codes,recommended_remediation) VALUES($1,$2,'Claim','No adequate passage meeting the source requirements in the approved corpus establishes this assertion.',$3,'UNSUPPORTED','{NON_PRIMARY_SUPPORT}','Locate adequate primary evidence, narrow the assertion, or delete it.') RETURNING *`, [run.verification_run_id, old.assertion.assertion_id, gap])).rows[0];
+    const authorRun = await oldRun('AUTHOR_CORPUS'), independentRun = await oldRun('INDEPENDENT_DISCOVERY'), authorRow = await oldResult(authorRun), independentRow = await oldResult(independentRun);
+    const { rows: [adversarial] } = await pool.query(`INSERT INTO adversarial_runs(project_id,article_version_id,author_verification_run_id,independent_verification_run_id,model_name,status) VALUES($1,$2,$3,$4,'m','COMPLETE') RETURNING *`, [old.id, old.version, authorRun.verification_run_id, independentRun.verification_run_id]);
+    await pool.query(`INSERT INTO adversarial_comparisons(adversarial_run_id,assertion_id,author_result_id,independent_result_id,comparison_status,materiality,rationale) VALUES($1,$2,$3,$4,'BOTH_DEFECTIVE','CRITICAL','Both runs classified the assertion UNSUPPORTED.')`, [adversarial.adversarial_run_id, old.assertion.assertion_id, authorRow.verification_result_id, independentRow.verification_result_id]);
+    const { rows: [discovery] } = await pool.query(`INSERT INTO discovery_runs(project_id,article_version_id,mode,status,policy,model_name,assertions_total) VALUES($1,$2,'AUTHOR_CORPUS','COMPLETE','{}','m',1) RETURNING *`, [old.id, old.version]);
+    await pool.query(`INSERT INTO discovery_candidates(discovery_run_id,assertion_id,candidate_url,disposition,disposition_reason) VALUES($1,$2,'https://example.test/failed','ACQUISITION_FAILED','connect ECONNREFUSED 10.0.0.5:5432 at /private/path')`, [discovery.discovery_run_id, old.assertion.assertion_id]);
+
+    await Promise.all([migrate(pool), migrate(pool)]);
+    assert.equal((await pool.query('SELECT count(*)::int n FROM schema_migrations')).rows[0].n, 16);
+
+    const workspace = await w.repo.getWorkspace(old.id), [shown] = workspace.verification_results;
+    assert.equal(shown.status, 'UNVERIFIABLE'); assert.equal(shown.not_checked_reason, 'OLDER_RUN'); assert.equal(shown.original_status, 'UNSUPPORTED'); assert.match(shown.material_gap, /^Nothing was checked/);
+    const { rows: [stored] } = await pool.query('SELECT status,material_gap,not_checked_reason,candidate_passage_count FROM verification_results WHERE verification_result_id=$1', [authorRow.verification_result_id]);
+    assert.deepEqual(stored, { status: 'UNSUPPORTED', material_gap: gap, not_checked_reason: null, candidate_passage_count: null }, 'the stored row is unchanged');
+    assert.equal(workspace.adversarial_comparisons[0].comparison_status, 'MATERIAL_DISAGREEMENT'); assert.equal(workspace.adversarial_comparisons[0].stored_comparison_status, 'BOTH_DEFECTIVE');
+    const context = await new AdversarialService(pool, {}).context(adversarial.adversarial_run_id);
+    assert.equal(context.author_results[0].not_checked_reason, 'OLDER_RUN'); assert.equal(context.comparisons[0].comparison_status, 'MATERIAL_DISAGREEMENT');
+    assert.equal(workspace.discovery_failures[0].reason, 'The source could not be downloaded.');
+    assert.match(coverageText(workspace.verification_run, workspace.verification_results), /^Older run/);
+    assert.equal(buildReport(workspace.assertions, workspace.verification_results).counts.older_not_checked, 1);
+    assert.equal(revisionFindings(workspace.assertions, [authorRow])[0].status, 'UNVERIFIABLE');
+    const exported = await new ExportService(pool, config).generate(old.id, { article_version_id: old.version, verification_run_id: authorRun.verification_run_id, format: 'csv', scope: 'all' });
+    const csv = await fs.readFile(exported.output_path, 'utf8');
+    assert.match(csv, /"UNSUPPORTED","OLDER_RUN"/); assert.doesNotMatch(csv, /absent from the approved corpus/);
+    await assert.rejects(pool.query('DELETE FROM source_versions'), /immutable/, 'protection stands after the upgrade');
+
+    const outcome = await deleteProject(pool, config, old.id, { confirm: true });
+    assert.equal(outcome.sources_deleted, 1); assert.deepEqual(outcome.file_errors, []);
+    for (const table of ['projects', 'corpus_snapshots', 'evidence_passages', 'source_versions', 'sources', 'verification_results', 'discovery_candidates', 'adversarial_comparisons']) assert.equal((await pool.query(`SELECT count(*)::int n FROM ${table}`)).rows[0].n, 0, table);
+    await assert.rejects(fs.access(path.join(config.sourceStorageRoot, source.original_storage_path)));
+  } finally {
+    await pool.end();
+    await admin.query(`DROP DATABASE IF EXISTS ${name} WITH (FORCE)`);
+    await admin.end();
+    await fs.rm(dir, { recursive: true, force: true });
+  }
 });

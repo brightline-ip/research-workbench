@@ -31,6 +31,8 @@ unused = len(gaps.get('discovery_failures') or []) + len(gaps.get('excluded_sour
 if unused:
     notes.append(f"{unused} sources could not be used: they failed to download, were blocked, were held for review, had no readable text, or looked like a login or access page.")
 notes.append(f"Evidence snapshot: {evidence['corpus_snapshot_id']} (frozen evidence)" if evidence.get('corpus_snapshot_id') else 'Legacy run: evidence was not frozen to source versions.')
+if report.get('older_not_checked'):
+    notes.append(f"{report['older_not_checked']} older results are displayed as nothing checked: that run sent no passage to the model for these claims. Stored results have not been rewritten.")
 if report.get('omitted'):
     notes.append(f"Showing the first {report['included']} priority findings. {report['omitted']} additional actionable findings are available in the workbench and the Full ledger export.")
 if report.get('legacy_adjusted'):

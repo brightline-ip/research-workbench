@@ -13,6 +13,12 @@
   `not_checked_reason` and a gap beginning "Nothing was checked". It used to read UNSUPPORTED. UNSUPPORTED now comes
   only from a model that examined passages, and says how many. `assertions_attempted` counts only claims whose
   passages reached the model. Results record `candidate_passage_ids` and `candidate_passage_count`. Requires migration 016.
+- Results from older runs read honestly: a claim saved as UNSUPPORTED or UNVERIFIABLE with nothing compared now shows as
+  UNVERIFIABLE with `not_checked_reason` `OLDER_RUN` in the workspace API, page, exports and comparisons, and goes to
+  Fix draft as nothing checked. Stored rows are unchanged. Older raw failure text is reduced to fixed wording on read.
+- Storage works where hard links are unavailable (exFAT, FAT, some SMB and 9p mounts), through a checked rename.
+- `npm run delete-project` keeps a source that another project's discovery candidate, access attempt or replacement
+  source refers to. Source versions lose their trigger protection only for a source the named project refers to.
 - Failed, blocked and held discovered sources are recorded: `source_failures` on the discover response,
   `discovery_failures` in the workspace, `evidence_gaps` on the verification run, and NOT USED in the page. Short pages
   with typical login or access wording are left out of the snapshot as suspected walls.
