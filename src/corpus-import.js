@@ -70,7 +70,7 @@ export class CorpusImportService {
       jurisdiction:input.jurisdiction||null,publication_date:input.publication_date||null,version_label:input.version_label||null,
       content_hash:documentId,normalized_content_hash:normalizedHash,original_storage_path:originalKey,normalized_storage_path:normalizedKey,
       media_type:metadata.media_type||metadata.mime_type||'application/octet-stream',byte_length:original.length,retrieval_status:normalizedKey?'NORMALIZED':'ACQUIRED',
-      authority_tier:authorityTier,provenance:{retrieval_method:'SOURCE_CORPUS',authority_assigned_by:authorityTier?'CALLER':null,collection,document_id:documentId,normalized_content_hash:normalizedHash,normalized_hash_checked_against_corpus:Boolean(normalizedHash&&corpusNormalizedHash),corpus_status:metadata.status||null,normalization_manifest:metadata.manifest||null,extraction_warnings:metadata.manifest?.warnings||metadata.warnings||[]},
+      authority_tier:authorityTier,provenance:{retrieval_method:'SOURCE_CORPUS',...(authorityTier?{authority_assigned_by:'CALLER'}:{}),collection,document_id:documentId,normalized_content_hash:normalizedHash,normalized_hash_checked_against_corpus:Boolean(normalizedHash&&corpusNormalizedHash),corpus_status:metadata.status||null,normalization_manifest:metadata.manifest||null,extraction_warnings:metadata.manifest?.warnings||metadata.warnings||[]},
       assertion_links:input.assertion_links,
     });
   }

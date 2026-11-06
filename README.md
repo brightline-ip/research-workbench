@@ -130,6 +130,19 @@ Without `SOURCE_CORPUS_URL` the feature is simply off: the import route answers 
 
 The browser UI uses a JSON HTTP API that other local tools can call. It is documented in [docs/API.md](docs/API.md).
 
+## What code checks about citations
+
+Named authorities are patent and publication numbers (with "Patent No.", "US ... B2" or a '543-style short form), reporter citations, U.S.C., C.F.R. and MPEP sections, and case names. Bare numbers such as dollar figures are not. A looser citation is matched to source titles: all its words must match, and a match on one word notes a problem without changing a result.
+
+Pin cites are read only from the citation the extraction model recorded, so prose such as "heated at 150 degrees" is not a pin:
+
+- **Pages:** the quoted words are found in the source. If that page's first or last line prints its number, that number decides, and a mismatch overturns `VERIFIED`. With no printed number, the file's page number is used only to confirm: a PDF's count differs after a cover sheet, so a mismatch is recorded as `PIN_NOT_CHECKED` with where the words are.
+- **Slides and paragraphs** (`[0012]`, ¶ 12): numbered in the source, so a mismatch overturns.
+- **Statute subsections:** must appear after the section. This shows they exist, not that the claim is about them.
+- **Column and line, reporter pages, and text without markers:** `PIN_NOT_CHECKED`. Check these by hand.
+
+Source text controls these markers, so a hostile web page could make a wrong pin pass. The checks only ever take `VERIFIED` away, and can miss a citation the extraction model did not record.
+
 ## What each status means
 
 Every status is a label on one claim, not a certification. Read the quoted passage yourself.
@@ -137,7 +150,7 @@ Every status is a label on one claim, not a certification. Read the quoted passa
 | Status | Who decides | What it means |
 |---|---|---|
 | `VERIFIED` | Model, plus mechanical tests | A model judged a passage adequate for the claim. Code checks that the passage it quotes appears verbatim in that passage and is at least 8 words or 40 characters long, and that a quotation of 5 or more words in the claim appears in a qualifying source, ignoring case, spacing and punctuation. A shorter quoted phrase that is missing is noted, and the result stays VERIFIED. These tests prove the words exist, not that they support the claim. |
-| `OVERSTATED`, `MISCITED`, `CONTRADICTED`, `STALE`, `FABRICATED` | Model, with exceptions | The model's reading of the passages it was shown: `STALE` has no freshness check behind it and `FABRICATED` has no lookup behind it. Code changes a model's `VERIFIED` to `MISCITED`, and records why, when: a quotation of 5 or more words is in no qualifying source (`QUOTE_NOT_IN_SOURCES`) or is in a source other than the one cited (`QUOTE_IN_OTHER_SOURCE`); a named authority (patent, publication, reporter citation, U.S.C., C.F.R., MPEP section or case name) is not among the sources (`CITED_SOURCE_NOT_IN_SOURCES`); the supporting passage comes from a different source than the one cited (`CITED_SOURCE_NOT_USED`); or a pin cite does not hold (`WRONG_PIN_CITE`). Pages, slides and bracketed or ¶ paragraphs are checked against markers in the source's text, and a statute's subsections by their presence after the section. A pin it cannot check, such as column and line or a reporter page, is recorded as `PIN_NOT_CHECKED`. These checks use only the sources in the run: they look nothing up in the world, they see only citations in claims the model extracted, and they compare words, not meaning. |
+| `OVERSTATED`, `MISCITED`, `CONTRADICTED`, `STALE`, `FABRICATED` | Model, with exceptions | The model's reading of the passages it was shown: `STALE` has no freshness check behind it and `FABRICATED` has no lookup behind it. Code changes a model's `VERIFIED`, and records why, in these cases. To `MISCITED`: a quotation of 5 or more words is in no qualifying source (`QUOTE_NOT_IN_SOURCES`) or only in a source other than the one cited (`QUOTE_IN_OTHER_SOURCE`); the support comes from a different source than the one cited (`CITED_SOURCE_NOT_USED`); or a pin cite does not hold (`WRONG_PIN_CITE`). To `UNVERIFIABLE`: a named authority is not among the run's sources (`CITED_SOURCE_NOT_IN_SOURCES`), which means unconfirmed, not wrong. See "What code checks about citations". These checks use only the run's sources, look nothing up in the world, and compare words, not meaning. |
 | `UNSUPPORTED` | Model | The model examined the retrieved passages and found no support. The gap says how many it saw, for example "Not found in the 3 passages retrieved". Only the best word matches are retrieved, so support elsewhere in a source may not have been seen. |
 | `UNVERIFIABLE` | Code or model | Usually nothing was compared: `not_checked_reason` says why, and the gap begins "Nothing was checked". It says nothing about whether the claim is true. See below. |
 | `NOT_APPLICABLE` | Code, from a model's or person's flag | The claim is marked as needing no outside source. It was not checked and is not verified. |

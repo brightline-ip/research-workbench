@@ -228,6 +228,8 @@ only, size/time limited) and returns `201`.
 
 `POST /api/projects/{id}/discover` takes `policy.reuse_max_age_days` (default 90; 0 turns it off): a web search is skipped for a claim when a stored primary source fetched within that time has one passage holding at least 60% of the claim's words. Linking a stored source again does not make it look newly fetched. The run's `coverage_notes` says how many claims this affected, and `policy.answered_from_store` lists them. Such a claim is compared only with what is stored, so a poor stored source can read as a finding.
 
+`POST /api/projects/{id}/adversarial` takes optional `max_external_queries`, a cap on its independent search (default 1000).
+
 `POST /api/projects/{id}/normalize-sources` extracts text from stored PDFs that have none yet (no refetch).
 
 `POST /api/projects/{id}/corpus-import` `[Idempotency-Key]` imports an exact document from a configured Get
