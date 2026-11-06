@@ -21,7 +21,7 @@ export function notCheckedResult(assertion,links,evidence,eligiblePassages){
   let reason,why;
   if(unreadable.length||failures.length){
     reason='SOURCES_UNAVAILABLE';
-    why=[unreadable.length&&`${plural(unreadable.length,'linked source')} had no readable text (failed, blocked, not downloaded, unreadable, or a suspected login or access page)`,failures.length&&`${plural(failures.length,'discovered source')} could not be fetched or were held for review`].filter(Boolean).join('; ');
+    why=[unreadable.length&&`${plural(unreadable.length,'linked source')} had no readable text (failed, blocked, not downloaded, unreadable, or a suspected login or access page)`,failures.length&&`${plural(failures.length,'discovered source')} could not be fetched or ${failures.length===1?'was':'were'} held for review`].filter(Boolean).join('; ');
   }else if(eligiblePassages){
     reason='NO_MATCHING_PASSAGE';
     why=`${plural(eligiblePassages,'eligible passage')} shared no word with this claim, so nothing was sent to the model; the source may be off topic or a login or access page`;
