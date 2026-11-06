@@ -14,6 +14,7 @@ rows = payload.get('verification_results', [])
 title = 'Verification full ledger' if full else 'Verification summary'
 summary = (
     f"{report.get('total', len(rows))} statements | {report.get('attention', 0)} need attention | "
+        f"{report.get('not_checked', 0)} not checked (provider failure) | "
     f"{report.get('verified', 0)} verified | {report.get('not_applicable', 0)} no external check | "
     f"{report.get('pending', 0)} pending"
 )
@@ -143,6 +144,7 @@ elif sys.argv[1] == 'xlsx':
             ['Needs attention', report.get('attention', 0)],
             ['Verified', report.get('verified', 0)],
             ['No external check', report.get('not_applicable', 0)],
+            ['Not checked (provider failure)', report.get('not_checked', 0)],
             ['Pending', report.get('pending', 0)],
         ]
         for index, row in enumerate(report_rows, 8):

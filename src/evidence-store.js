@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { chunkNormalizedText } from './passages.js';
+import { chunkNormalizedText, isUnreadableText } from './passages.js';
 
 const canonical=value=>Array.isArray(value)?value.map(canonical):value&&typeof value==='object'?Object.fromEntries(Object.keys(value).sort().map(k=>[k,canonical(value[k])])):value;
 export const evidenceHash=value=>crypto.createHash('sha256').update(typeof value==='string'||Buffer.isBuffer(value)?value:JSON.stringify(canonical(value))).digest('hex');
@@ -50,7 +50,9 @@ export class EvidenceStore {
         let normalized=null;
         if(source.normalized_storage_path){
           const bytes=await readEvidenceFile(this.root,source.normalized_storage_path,source.provenance?.normalized_content_hash);
-          normalized=await preserve(this.root,bytes,'normalized');texts.set(source.source_id,bytes.toString('utf8'));
+          const text=bytes.toString('utf8');
+          // Unreadable text is left out of the snapshot, so its claims report evidence as unavailable, never unsupported by garbage.
+          if(!isUnreadableText(text)){normalized=await preserve(this.root,bytes,'normalized');texts.set(source.source_id,text);}
         }
         const metadata={title:source.title,canonical_url:source.canonical_url,issuing_authority:source.issuing_authority,media_type:source.media_type,source_type:source.source_type,authority_tier:source.authority_tier,freshness_status:source.freshness_status};
         const identity=evidenceHash({source_id:source.source_id,native:native.hash,normalized:normalized?.hash||null,metadata});

@@ -130,6 +130,13 @@ Without `SOURCE_CORPUS_URL` the feature is simply off: the import route answers 
 
 The browser UI uses a JSON HTTP API that other local tools can call. It is documented in [docs/API.md](docs/API.md).
 
+## Failure reporting
+
+- If the AI provider fails during verification, the run stops and is marked FAILED with the reason. Claims not yet checked have no result. Older runs that saved such outages as UNVERIFIABLE display as NOT_CHECKED (stored data unchanged) and stay out of Fix draft.
+- In n8n mode, `/api/readiness` asks the gateway (`/healthz`) whether it is answering. Direct OpenAI mode has no free probe and reports the credential only.
+- Temporary provider failures return HTTP 503. A rejection that retrying cannot fix (bad login, disallowed model, other 4xx) returns 500 with its reason, so scripts can stop retrying.
+- Normalized text that is gzip bytes or over 1% control characters is left out of the sealed snapshot, and its claims report evidence as unavailable. Stray NUL bytes in otherwise good text are removed from passages. Gzip sent without a header is decompressed on new downloads. Already stored unreadable sources stay unreadable until re-acquired or re-extracted.
+
 ## Data locations
 
 - **PostgreSQL**: projects, article checkpoints, claims, runs, verification results, audit records, AI usage counters. Nothing is deleted automatically.

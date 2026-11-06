@@ -2,6 +2,10 @@ import { displayResult } from '../public/report-model.js';
 const verified=status=>status==='VERIFIED';
 export function compare(author,independent,loadBearing){
   let comparison_status,rationale;
+  // A provider outage says nothing about the claim, so it compares like a missing result, never as a shared defect.
+  if(author?.status==='NOT_CHECKED')author=null;
+  if(independent?.status==='NOT_CHECKED')independent=null;
+  if(!author&&!independent)return{comparison_status:'MATERIAL_DISAGREEMENT',materiality:loadBearing?'CRITICAL':'HIGH',rationale:'Neither run assessed this claim; it must be verified again.'};
   if(author?.status===independent?.status){comparison_status=(verified(author?.status)||author?.status==='NOT_APPLICABLE')?'AGREES':'BOTH_DEFECTIVE';rationale=`Both runs classified the assertion ${author?.status||'without a result'}.`}
   else if(verified(author?.status)&&!verified(independent?.status)){comparison_status='AUTHOR_ONLY_SUPPORT';rationale=`Author corpus returned VERIFIED while independent discovery returned ${independent?.status||'no result'}; scrutinize source-selection bias, framing, and omitted authority.`}
   else if(!verified(author?.status)&&verified(independent?.status)){comparison_status='INDEPENDENT_ONLY_SUPPORT';rationale=`Independent discovery found support that the author corpus did not establish (${author?.status||'no result'}).`}

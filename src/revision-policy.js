@@ -7,7 +7,7 @@ For every non-REMOVED entry, revised_excerpt must copy a short verbatim excerpt 
 
 export function revisionFindings(assertions, results) {
   const byId=new Map(assertions.map(a=>[a.assertion_id,a]));
-  return results.map(result=>displayResult(byId.get(result.assertion_id),result)).filter(needsAttention).map(result=>{
+  return results.map(result=>displayResult(byId.get(result.assertion_id),result)).filter(result=>needsAttention(result)&&result.status!=='NOT_CHECKED').map(result=>{
     const assertion=byId.get(result.assertion_id);
     return {...result, original_excerpt:assertion?.evidence_span||result.assertion_as_made,
       start_offset:assertion?.start_offset, end_offset:assertion?.end_offset,

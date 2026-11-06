@@ -2,6 +2,7 @@ import { EvidenceStore } from './evidence-store.js';
 import { rankPassages, validateVerificationEvidence } from './passages.js';
 import { requiresExternalEvidence } from '../public/report-model.js';
 import { mapConcurrent } from './concurrency.js';
+import { isPermanentProviderFailure } from './safety.js';
 
 export class VerificationService {
   constructor(pool, orchestrator, storageRoot, modelName = null, concurrency = 3, evidenceStore = null) { this.pool=pool; this.orchestrator=orchestrator; this.storageRoot=storageRoot; this.modelName=modelName; this.concurrency=concurrency; this.evidenceStore=evidenceStore||new EvidenceStore(pool,storageRoot); }
@@ -55,7 +56,7 @@ export class VerificationService {
       };
     } else {
       try { result = validateVerificationEvidence(await this.orchestrator.verifyAssertion({ assertion: { assertion_id: assertion.assertion_id, assertion_text: assertion.assertion_text, assertion_class: assertion.assertion_class, citation_as_written: assertion.citation_as_written, primary_source_required: assertion.primary_source_required !== false }, candidate_passages: candidates.map(p => ({ source_id:p.source_id,passage_id:p.passage_id,title:p.title,issuing_authority:p.issuing_authority,locator:p.locator,relationship_type:p.relationship_type,proposition_source_class:p.proposition_source_class,passage_text:p.passage_text })) }), candidates); }
-      catch(error){if(error.publicMessage&&error.statusCode)throw error;result={source_id:null,passage_id:null,assertion_as_made:assertion.assertion_text,source_actually_establishes:'The verifier did not return a valid verbatim evidence extraction.',material_gap:`Verification output failed evidence validation: ${error.message}`,extracted_passage:null,status:'UNVERIFIABLE',defect_codes:[],confidence:null,recommended_remediation:'Retry verification or inspect the retrieved primary passages manually.',provider_response_id:null}}
+      catch(error){if(error.publicMessage&&error.statusCode)throw error;if(error.providerReason){const message=`Verification stopped before finishing: the AI provider failed (${error.providerReason}). This run is incomplete and unchecked claims have no result. Retry when the provider is available.`;throw Object.assign(new Error(message),{statusCode:isPermanentProviderFailure(error.providerReason)?500:503,publicMessage:message,providerReason:error.providerReason})}result={source_id:null,passage_id:null,assertion_as_made:assertion.assertion_text,source_actually_establishes:'The verifier did not return a valid verbatim evidence extraction.',material_gap:`Verification output failed evidence validation: ${error.message}`,extracted_passage:null,status:'UNVERIFIABLE',defect_codes:[],confidence:null,recommended_remediation:'Retry verification or inspect the retrieved primary passages manually.',provider_response_id:null}}
     }
     const passage = result.passage_id ? candidates.find(p => p.passage_id === result.passage_id) : null;
     return this.#saveResult(runId, assertion, result, passage);

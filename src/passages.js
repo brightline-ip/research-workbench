@@ -2,8 +2,20 @@ import crypto from 'node:crypto';
 
 const words = text => new Set((text.toLowerCase().match(/[\p{L}\p{N}]{3,}/gu) || []).filter(w => !['the','and','that','with','from','this','were','have','into'].includes(w)));
 
+// Some stored "normalized" files are gzip bytes or partly garbled PDF extraction. Partial text must not pass as a
+// complete source, and readable files in the stored corpus stay under 1% control characters. U+FFFD does not count:
+// a Latin-1 page decoded as UTF-8 is still usable. The original stays stored for a better extraction.
+export function isUnreadableText(text) {
+  if (!text) return false;
+  if (text.charCodeAt(0) === 0x1f && text.charCodeAt(1) === 0xfffd) return true;
+  let bad = 0;
+  for (let i = 0; i < text.length; i++) { const c = text.charCodeAt(i); if (c < 32 && ![9, 10, 12, 13].includes(c)) bad++; }
+  return bad / text.length > 0.01;
+}
+
 export function chunkNormalizedText(text, maxChars = 1800) {
   if (!Number.isInteger(maxChars) || maxChars < 1) throw new Error('Invalid passage size');
+  text = text.replaceAll('\0', ''); // PostgreSQL text cannot hold NUL; a stray one must not block the whole source. Offsets refer to this text.
   const chunks = [];
   let start=0;
   while(start<text.length){

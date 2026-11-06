@@ -1,3 +1,4 @@
+import { isPermanentProviderFailure } from './safety.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -209,9 +210,12 @@ export function createHandler(repository, orchestrator, sourceServices = {}) {
       }
       send(res, 404, { error: 'not found' });
     } catch (error) {
-      const status=[400,404,409,413,415,422,429,503].includes(error.statusCode)?error.statusCode:500;
-      console.error(JSON.stringify({event:'request_failed',request_id:requestId,status,...failureLogFields(req,error)}));
-      if (!res.headersSent) send(res,status,{error:error.publicMessage||(status===500?'Operation failed. Check the project status before retrying.':'Request could not be completed. Check the input and project status.'),request_id:requestId});
+      const status=[400,404,409,413,415,422,429,503].includes(error.statusCode)?error.statusCode:error.providerReason&&!isPermanentProviderFailure(error.providerReason)?503:500;
+      const logFields=failureLogFields(req,error);
+      console.error(JSON.stringify({event:'request_failed',request_id:requestId,status,...logFields}));
+      // Only the controlled vocabulary from failureLogFields reaches the caller, so retries can tell a provider outage from a permanent error.
+      const publicError=error.publicMessage||(error.providerReason?`The AI provider failed (${error.providerReason}). Retry when it is available.`:status===500?'Operation failed. Check the project status before retrying.':'Request could not be completed. Check the input and project status.');
+      if (!res.headersSent) send(res,status,{error:publicError,...(status===500&&error.severity?{reason:logFields.reason}:{}),request_id:requestId});
       else res.destroy();
     } finally { if(operationKey)activeProjects.delete(operationKey); }
   };

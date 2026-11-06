@@ -31,7 +31,7 @@ function renderAssertions(items=[],results=[]){
  const report=buildReport(items,results),target=$('#assertions');target.replaceChildren();
  const filter=$('#findings-filter').value;
  const rows=report.rows.filter(row=>filter==='all'||(filter==='attention'?needsAttention(row.result)||!row.result:filter==='not_applicable'?row.result?.status==='NOT_APPLICABLE':row.result?.status==='VERIFIED'));
- $('#report-summary').textContent=`${report.counts.attention} need attention · ${report.counts.verified} verified · ${report.counts.not_applicable} need no external check · ${report.counts.pending} pending. No external check does not mean verified.`;
+ $('#report-summary').textContent=`${report.counts.attention} need attention · ${report.counts.verified} verified · ${report.counts.not_applicable} need no external check · ${report.counts.not_checked?`${report.counts.not_checked} NOT CHECKED (provider failure) · `:''}${report.counts.pending} pending. No external check does not mean verified.`;
  $('#legacy-note').hidden=!report.counts.legacy_adjusted;
  $('#legacy-note').textContent=`${report.counts.legacy_adjusted} historical unsupported labels were excluded from attention because their claim classification requested no source. Original results remain stored and visible in the full ledger.`;
  if(!rows.length){target.append(Object.assign(document.createElement('p'),{className:'empty-state',textContent:items.length?'No findings in this view. Choose Full ledger to see every statement.':'Findings will appear after claim extraction.'}));return}
@@ -43,7 +43,7 @@ function renderAssertions(items=[],results=[]){
   if(result?.extracted_passage){const evidence=document.createElement('div');evidence.className='evidence';evidence.textContent=`${result.source_title||'Source'} · ${result.pin_cite||'locator unavailable'}: “${result.extracted_passage}”`;card.append(evidence)}
   if(result?.material_gap){const gap=document.createElement('div');gap.className='span';gap.textContent=`Material gap: ${result.material_gap}`;card.append(gap)}
   if(result?.recommended_remediation){const fix=document.createElement('div');fix.className='remediation';fix.textContent=result.recommended_remediation;card.append(fix)}
-  if(result?.original_status){const old=document.createElement('div');old.className='span';old.textContent=`Original saved status: ${result.original_status}. Display adjusted using the recorded source requirement.`;card.append(old)}
+  if(result?.original_status){const old=document.createElement('div');old.className='span';old.textContent=result.status==='NOT_CHECKED'?`Original saved status: ${result.original_status}. Shown as not checked because the AI provider failed on this claim.`:`Original saved status: ${result.original_status}. Display adjusted using the recorded source requirement.`;card.append(old)}
   target.append(card);
  }shown=Math.min(shown+25,rows.length);if(shown<rows.length){more.textContent=`Show next ${Math.min(25,rows.length-shown)} (${rows.length-shown} remaining)`;target.append(more)}}
  more.onclick=appendPage;appendPage();

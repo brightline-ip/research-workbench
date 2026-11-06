@@ -2,6 +2,7 @@ import { extractPdfText } from './source-normalization.js';
 import crypto from 'node:crypto';
 import dns from 'node:dns/promises';
 import fs from 'node:fs/promises';
+import zlib from 'node:zlib';
 import net from 'node:net';
 import path from 'node:path';
 import http from 'node:http';
@@ -63,6 +64,10 @@ function extension(mediaType) {
 }
 
 export function normalizeText(buffer, mediaType) {
+  // Some servers send gzip without a Content-Encoding header, so fetch leaves it compressed.
+  if (buffer[0] === 0x1f && buffer[1] === 0x8b) {
+    try { buffer = zlib.gunzipSync(buffer, { maxOutputLength: 64 * 1024 * 1024 }); } catch { return null; }
+  }
   const raw = buffer.toString('utf8');
   if (mediaType.includes('html')) return raw
     .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ').replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')

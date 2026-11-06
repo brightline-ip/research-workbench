@@ -42,6 +42,10 @@ const ADAPTER_REASONS = new Set(['adapter busy; retry later', 'adapter error', '
   'model not supported on the subscription', 'discovery performed no web search', 'Unsupported operation',
   'Invalid gateway request', 'Invalid discovery request', 'Model is not allowed on the subscription adapter', 'Discovery is disabled on the subscription adapter']);
 const knownAdapterReason = (value) => typeof value === 'string' && (ADAPTER_REASONS.has(value));
+// 4xx (except timeout and rate limit) and login or model rejections stay wrong until someone fixes the setup.
+export function isPermanentProviderFailure(reason) {
+  return /^HTTP 4(?!08|29)\d\d\b/.test(reason || '') || /login rejected|model not supported|Model is not allowed|Discovery is disabled/.test(reason || '');
+}
 export function providerFailureReason(error, timeoutMs) {
   if (error?.providerReason) return error.providerReason;
   if (error?.name === 'TimeoutError' || error?.name === 'AbortError') return `no response within ${Math.round(timeoutMs / 1000)} s`;
