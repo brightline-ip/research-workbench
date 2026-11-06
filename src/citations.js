@@ -2,22 +2,22 @@
 // quotation in the source cited, and do the quoted words sit where the pin cite says? Nothing here looks an authority up in
 // the world or judges whether a passage supports a claim. A false alarm costs a lawyer's trust, so a check overturns a
 // VERIFIED only when it is sure, and otherwise says what it found and leaves the result alone.
-import { overturnsResult, quotedPieces, sourceWords, wordsOnly } from './passages.js';
+import { containsQuote, overturnsResult, prepareSource, quotedPieces, wordsOnly } from './passages.js';
 
 const HEAD_CHARS=2000,LABEL_CHARS=60;
 const STOP_WORDS=new Set(['see','also','the','and','for','from','with','this','that','page','pages','para','paragraph','slide','section','note','supra','infra','ibid','cited','citing','quoting','decl','decls','depo','exhs','corp','resp','mem']);
 // Words that name a kind of document. Alone they say nothing about which document is meant.
 const GENERIC_WORDS=new Set(['patent','application','publication','action','office','exhibit','declaration','response','reference','specification','document','report','brief','memo','memorandum','letter','file','draft','opinion','order','owner','court','guide','notes']);
-const PARTY_WORDS=/^(?:inc|corp|corporation|co|company|ltd|llc|llp|lp|plc|pharms|pharm|pharmaceuticals|techs|technologies|holdings|int'l|intl|the|of|et|al|bd|trs|univ|united|states|people|commonwealth|state)$/;
+const PARTY_WORDS=/^(?:inc|corp|corporation|co|company|ltd|llc|llp|lp|plc|pharms|pharm|pharmaceuticals|techs|technologies|holdings|int'l|intl|the|of|et|al|bd|trs|univ|jr|united|states|people|commonwealth|state|see|also|accord|compare|contra|citing|quoting|but|under|cf|plaintiff|plaintiffs|defendant|defendants|appellant|appellee|petitioner|respondent)$/;
 const tokens=text=>(String(text||'').toLowerCase().match(/[\p{L}\p{N}]{4,}/gu)||[]).filter(word=>!STOP_WORDS.has(word)&&!/^\d+$/.test(word));
 const label=text=>{const clean=String(text).replace(/\s+/g,' ').trim();return clean.length>LABEL_CHARS?`${clean.slice(0,LABEL_CHARS)}…`:clean};
 const SUBSECTIONS=/\([a-zA-Z0-9]+\)/g;
 const REPORTERS=String.raw`(?:F\.\s?(?:2d|3d|4th)|F\.\s?Supp\.(?:\s?[23]d)?|S\.\s?Ct\.|U\.?S\.?P\.?Q\.?(?:2d)?)`;
 
-// The word most likely to identify a party. "Bd. of Trs. of Leland Stanford Jr. Univ." is found under "stanford".
+// The words that can identify a party, without signals such as "Compare" or corporate suffixes. Any one of them will do.
 function party(words){
   const parts=words.toLowerCase().split(/[\s,]+/).map(word=>word.replace(/[^\p{L}\p{N}'-]/gu,'')).filter(word=>word.length>=3&&!PARTY_WORDS.test(word));
-  return parts.sort((a,b)=>b.length-a.length)[0]||null;
+  return parts.length?parts:null;
 }
 
 // Authorities named precisely enough that their absence means something. Bare numbers are never authorities.
@@ -66,8 +66,8 @@ export function parseCitation(citation,sentence=''){
 }
 
 function matchesSource(id,text){
-  if(id.kind==='case')return id.parties.every(name=>new RegExp(`(?<![\\p{L}\\p{N}])${name.replace(/[^\p{L}\p{N}'-]/gu,'')}(?![\\p{L}\\p{N}])`,'iu').test(text));
-  if(id.kind==='short')return new RegExp(`\\d{1,2},?\\d{3},?${id.value}(?!\\d)`).test(text);
+  if(id.kind==='case')return id.parties.every(names=>names.some(name=>new RegExp(`(?<![\\p{L}\\p{N}])${name.replace(/[^\p{L}\p{N}'-]/gu,'')}(?![\\p{L}\\p{N}])`,'iu').test(text)));
+  if(id.kind==='short')return new RegExp(`\\d{1,2},?\\d{3},?${id.value}(?!\\d)|['\u2019]${id.value}\\s+(?:patent|application|publication)`,'i').test(text);
   if(id.kind==='section'){
     const number=id.value.replace('.','\\.');
     if(id.code==='mpep')return text.toLowerCase().includes('mpep')&&new RegExp(`(?<![\\d.])${number}(?![\\d])`).test(text);
@@ -124,7 +124,7 @@ function printedPages(parts){
 
 // {holds:true} the pin holds; {holds:false} it does not, for certain; {holds:null,where} it could not be settled.
 export function pinHolds(pin,text,quote){
-  const has=segment=>sourceWords(segment).includes(wordsOnly(quote));
+  const has=segment=>containsQuote(prepareSource(segment),quote);
   if(pin.kind==='page'||pin.kind==='slide'){
     if(!quote)return {holds:null};
     const parts=markedParts(text).filter(part=>part.kind===pin.kind);
@@ -148,20 +148,22 @@ export function pinHolds(pin,text,quote){
     return {holds:null,where:`page ${parts[located[0]].number} of the file`};
   }
   if(pin.kind==='paragraph'){
-    // A numbered paragraph starts a line. "Compl. ¶ 7" or "[2019] EWCA" in the middle of the text only refers to something.
-    const marks=[...text.matchAll(/^[ \t]*(?:\[(0\d{3,4})\]|¶\s*(\d{1,5}))/gm)];
+    // [0012] is a patent paragraph wherever extraction leaves it. "Compl. ¶ 7" in mid-sentence only refers to something, so ¶ counts only at a line's start.
+    const marks=[...text.matchAll(/\[(0\d{3,4})\]|^[ \t]*¶\s*(\d{1,5})/gm)];
     if(!marks.length||!quote)return {holds:null};
     const parts=marks.map((mark,index)=>({number:Number(mark[1]||mark[2]),text:text.slice(mark.index+mark[0].length,marks[index+1]?.index??text.length)}));
     if(parts.some(part=>part.number===pin.value&&has(part.text)))return {holds:true};
     const where=parts.find(part=>has(part.text));
-    return where?{holds:false,where:`paragraph ${where.number}`}:{holds:null};
+    // Wrong only when the cited paragraph is really there and the words are really elsewhere.
+    return where&&parts.some(part=>part.number===pin.value)?{holds:false,where:`paragraph ${where.number}`}:{holds:null,where:where?`paragraph ${where.number}`:undefined};
   }
   if(pin.kind==='subsection'){
     const number=pin.section.replace('.','\\.');
     const start=text.search(new RegExp(`(?:§+\\s*|\\bsec(?:tion)?\\.?\\s*|\\.\\s?[Cc]\\.?\\s*(?:§+\\s*)?)${number}(?![\\d])|^\\s*${number}\\.`,'m'));
     if(start<0)return {holds:null};
     let at=start;const compact=text.toLowerCase().replace(/\(\s+/g,'(').replace(/\s+\)/g,')');
-    for(const sub of pin.subs){at=compact.indexOf(sub,at);if(at<0)return {holds:false,where:null}}
+    // A statute has versions, and the code cannot tell which the writer meant, so a missing subsection is reported, never called wrong.
+    for(const sub of pin.subs){at=compact.indexOf(sub,at);if(at<0)return {holds:null,where:'not in this copy of the section, which may be a different version'}}
     return {holds:true};
   }
   return {holds:null};
@@ -182,30 +184,32 @@ export function checkCitation(assertion,passages,result,prepared=new Map()){
     entry.text+=`${p.passage_text}\n`;bySource.set(p.source_id,entry);
   }
   const sources=[...bySource.values()].map(s=>({...s,head:`${s.title} ${s.url} ${s.text.slice(0,HEAD_CHARS)}`}));
-  const plain=s=>{if(!prepared.has(s.source_id))prepared.set(s.source_id,sourceWords(s.text));return prepared.get(s.source_id)};
+  const inSource=(s,piece)=>{if(!prepared.has(s.source_id))prepared.set(s.source_id,prepareSource(s.text));return containsQuote(prepared.get(s.source_id),piece)};
   const {named,sure,cited,mentioned}=citedSources(parsed,citation,sources);
   const codes=[],notes=[];let status=null;
-  const absent=ids=>{
+  const absent=(ids,what)=>{
     const names=ids.map(id=>id.label).join(', ');
     codes.push('CITED_SOURCE_NOT_IN_SOURCES');
-    notes.push(`Citation check: ${names} is not among this run's sources, so this citation could not be confirmed. That does not show it is wrong.`);
+    notes.push(`Citation check: ${names} is not among this run's sources, so ${what} could not be confirmed. That does not show it is wrong.`);
   };
-  if(named&&!mentioned){absent(parsed.ids);return {codes,notes,status:'UNVERIFIABLE'}}
+  if(named&&!mentioned){absent(parsed.ids,'this citation');return {codes,notes,status:'UNVERIFIABLE'}}
   // A reference named in the sentence, when the citation itself points elsewhere, is reported at most.
   const missing=parsed.sentenceIds.filter(id=>!sources.some(s=>matchesSource(id,`${s.title} ${s.url} ${s.text}`)));
-  if(missing.length){absent(missing);if(!citation)status='UNVERIFIABLE'}
+  if(missing.length){absent(missing,'a reference named in this sentence');if(!citation)status='UNVERIFIABLE'}
   const pieces=quotedPieces(sentence);
   if(cited.length){
-    const elsewhere=pieces.filter(piece=>!cited.some(s=>plain(s).includes(wordsOnly(piece)))&&sources.some(s=>plain(s).includes(wordsOnly(piece))));
+    const elsewhere=pieces.filter(piece=>!cited.some(s=>inSource(s,piece))&&sources.some(s=>inSource(s,piece)));
     if(elsewhere.length){
       codes.push('QUOTE_IN_OTHER_SOURCE');
-      notes.push(`Citation check: ${elsewhere.map(q=>`"${label(q)}"`).join(', ')} is in another source, not in the one cited.`);
+      notes.push(`Citation check: ${elsewhere.map(q=>`"${label(q)}"`).join(', ')} is in another source, not found in the one cited. If the cited source is a scan, compare by hand.`);
       if(sure&&elsewhere.some(overturnsResult))status='MISCITED';
     }
-    if(result.source_id&&!cited.some(s=>s.source_id===result.source_id)){
+    // An Office Action often quotes the case a response cites, so support from it is fine when the same words are in the case.
+    const supportInCited=result.extracted_passage&&cited.some(s=>inSource(s,result.extracted_passage));
+    if(result.source_id&&!cited.some(s=>s.source_id===result.source_id)&&!supportInCited&&!pieces.some(piece=>cited.some(s=>inSource(s,piece)))){
       codes.push('CITED_SOURCE_NOT_USED');
-      notes.push('Citation check: the passage quoted as support comes from a different source than the one cited.');
-      if(sure)status='MISCITED';
+      notes.push('Citation check: the support comes from a different source than the one cited, so the citation itself could not be confirmed.');
+      if(sure&&!status)status='UNVERIFIABLE';
     }
   }
   const scope=cited.length?cited:sources.filter(s=>s.source_id===result.source_id);
@@ -221,7 +225,7 @@ export function checkCitation(assertion,passages,result,prepared=new Map()){
       codes.push('WRONG_PIN_CITE');
       notes.push(`Citation check: "${pin.label}" does not hold: ${where?`the words are at ${where}`:'that spot is not in the source'}.`);
       status='MISCITED';
-    }else unchecked.push(where?`"${pin.label}" (the words are on ${where}; printed page numbers may differ)`:`"${pin.label}"`);
+    }else unchecked.push(where?`"${pin.label}" (${pin.kind==='subsection'?where:`the words are on ${where}${pin.kind==='page'?'; printed page numbers may differ':''}`})`:`"${pin.label}"`);
   }
   if(unchecked.length){
     codes.push('PIN_NOT_CHECKED');

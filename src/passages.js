@@ -68,7 +68,30 @@ const quoteForm=text=>text.replace(/[\u201c\u201d\u201e\u00ab\u00bb]/g,'"').repl
 export const wordsOnly=text=>String(text||'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
 // Shorter quoted phrases are as often defined terms or scare quotes as quotations, so they are noted but do not overturn a result.
 // What extraction puts between a source's pages, and a page number alone on its line, are not words of the document, so a quotation can run across them.
-export const sourceWords=text=>wordsOnly(String(text||'').replace(/<!--[^>]*-->/g,' ').replace(/^##\s+(?:page|slide)\s+\d+\s*$/gim,' ').replace(/^\s*(?:page\s+)?\d{1,4}(?:\s+of\s+\d{1,4})?\s*$/gim,' '));
+const withoutPageMarks=text=>String(text||'').replace(/<!--[^>]*-->/g,' ').replace(/^##\s+(?:page|slide)\s+\d+\s*$/gim,' ').replace(/^\s*(?:page\s+)?\d{1,4}(?:\s+of\s+\d{1,4})?\s*$/gim,' ');
+const wordTokens=text=>String(text||'').normalize('NFKC').toLowerCase().match(/\p{L}+|\p{N}+/gu)||[];
+export const prepareSource=text=>{const clean=withoutPageMarks(text);return {plain:wordsOnly(clean),tokens:wordTokens(clean)}};
+// Running headers, footnote numbers and transcript line numbers can sit between a quotation's words in extracted text, so a
+// missing quotation is looked for again, in order, allowing stray numbers and one or two short runs of other text.
+const HEADER_WORDS=40,MAX_INTERRUPTIONS=2;
+export function containsQuote(source,quote){
+  if(source.plain.includes(wordsOnly(quote)))return true;
+  const wanted=wordTokens(quote),tokens=source.tokens;
+  if(wanted.length<5)return false;
+  for(let start=tokens.indexOf(wanted[0]);start>=0;start=tokens.indexOf(wanted[0],start+1)){
+    let at=start,next=0,interruptions=0;
+    while(next<wanted.length&&at<tokens.length){
+      if(tokens[at]===wanted[next]){at++;next++;continue}
+      if(/^\p{N}+$/u.test(tokens[at])){at++;continue}
+      if(next<2||interruptions>=MAX_INTERRUPTIONS)break;
+      const resume=tokens.slice(at,at+HEADER_WORDS).findIndex((token,index)=>token===wanted[next]&&tokens[at+index+1]===wanted[next+1]);
+      if(resume<0)break;
+      at+=resume;interruptions++;
+    }
+    if(next===wanted.length)return true;
+  }
+  return false;
+}
 export const QUOTE_WORDS_TO_OVERTURN=5;
 export const overturnsResult=piece=>piece.split(' ').length>=QUOTE_WORDS_TO_OVERTURN;
 // The word-for-word parts of what a claim puts in quotation marks. Ellipses and bracketed changes split a quotation.
@@ -86,8 +109,8 @@ export function missingQuotes(assertion,passages,prepared=new Map()){
   const pieces=quotedPieces(`${assertion.evidence_span||''} ${assertion.assertion_text||''}`);
   if(!pieces.length)return [];
   const sources=new Set(passages.map(p=>p.source_id));
-  for(const id of sources)if(!prepared.has(id))prepared.set(id,sourceWords(passages.filter(p=>p.source_id===id).sort((a,b)=>a.sequence_number-b.sequence_number).map(p=>p.passage_text).join('\n')));
-  return pieces.filter(piece=>![...sources].some(id=>prepared.get(id).includes(wordsOnly(piece))));
+  for(const id of sources)if(!prepared.has(id))prepared.set(id,prepareSource(passages.filter(p=>p.source_id===id).sort((a,b)=>a.sequence_number-b.sequence_number).map(p=>p.passage_text).join('\n')));
+  return pieces.filter(piece=>![...sources].some(id=>containsQuote(prepared.get(id),piece)));
 }
 
 export function validateVerificationEvidence(result, candidates) {

@@ -111,7 +111,7 @@ export class VerificationService {
     if(candidates.length&&!result.not_checked_reason){
       // Facts about the citation itself. Like the quotation check, they can take a VERIFIED away and never grant one.
       const citation=checkCitation(assertion,primary,result,evidence.preparedQuoteText??=new Map());
-      if(citation.codes.length)result={...result,status:result.status==='VERIFIED'&&citation.status?citation.status:result.status,defect_codes:[...new Set([...(result.defect_codes||[]),...citation.codes])],material_gap:[...citation.notes,result.material_gap].filter(Boolean).join(' ')};
+      if(citation.codes.length)result={...result,...(result.status==='VERIFIED'&&citation.status==='UNVERIFIABLE'?{not_checked_reason:'CITATION_NOT_CONFIRMED'}:{}),status:result.status==='VERIFIED'&&citation.status?citation.status:result.status,defect_codes:[...new Set([...(result.defect_codes||[]),...citation.codes])],material_gap:[...citation.notes,result.material_gap].filter(Boolean).join(' ')};
     }
     const passage = result.passage_id ? candidates.find(p => p.passage_id === result.passage_id) : null;
     return this.#saveResult(runId, assertion, result, passage, candidates);

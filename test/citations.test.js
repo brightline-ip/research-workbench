@@ -25,9 +25,10 @@ test('real citation forms are recognised',()=>{
   assert.deepEqual(ids('35 U.S.C. § 102(b)(1)'),['section']);
   assert.deepEqual(ids('37 C.F.R. 1.116'),['section']);
   assert.deepEqual(ids('MPEP § 2143'),['section']);
-  assert.deepEqual(parseCitation('Ariad Pharms., Inc. v. Eli Lilly & Co.').ids[0].parties,['ariad','lilly']);
-  assert.deepEqual(parseCitation('Bd. of Trs. of Leland Stanford Jr. Univ. v. Roche').ids[0].parties,['stanford','roche']);
-  assert.deepEqual(parseCitation('United States v. Jones').ids[0].parties,['jones']);
+  assert.deepEqual(parseCitation('Ariad Pharms., Inc. v. Eli Lilly & Co.').ids[0].parties,[['ariad'],['eli','lilly']]);
+  assert.deepEqual(parseCitation('Bd. of Trs. of Leland Stanford Jr. Univ. v. Roche').ids[0].parties,[['leland','stanford'],['roche']]);
+  assert.deepEqual(parseCitation('United States v. Jones').ids[0].parties,[['jones']]);
+  assert.deepEqual(parseCitation('Compare Bilski v. Kappos').ids[0].parties,[['bilski'],['kappos']]);
   assert.deepEqual(parseCitation('In re Bilski, 545 F.3d 943').ids.map(id=>id.kind).sort(),['case','reporter']);
   const pinOf=text=>parseCitation(text).pins[0];
   assert.deepEqual(pinOf('35 U.S.C. 102(b)(1)').subs,['(b)','(1)']);
@@ -85,8 +86,8 @@ test('subsections are checked only against the statute itself',()=>{
   const statute=passage('st','§102. Conditions','§102. Novelty. (a) A person. (b ) Exceptions. (1) Disclosures made 1 year or less.');
   const ask=(citation,source)=>checkCitation(plainClaim(citation),[source],{status:'VERIFIED',source_id:source.source_id});
   assert.deepEqual(ask('35 U.S.C. 102(b)(1)',statute),clean,'spacing from OCR does not matter');
-  const wrong=ask('35 U.S.C. 102(c)(9)',statute);
-  assert.deepEqual(wrong.codes,['WRONG_PIN_CITE']);assert.equal(wrong.status,'MISCITED');
+  const version=ask('35 U.S.C. 102(c)(9)',statute);
+  assert.deepEqual(version.codes,['PIN_NOT_CHECKED'],'a statute has versions');assert.equal(version.status,null);assert.match(version.notes[0],/different version/);
   const action=passage('oa','Office Action.pdf','The claims are rejected under 35 U.S.C. 102(a)(2).');
   const elsewhere=ask('35 U.S.C. § 102(b)(2)(C)',action);
   assert.deepEqual(elsewhere.codes,['PIN_NOT_CHECKED']);assert.equal(elsewhere.status,null);
@@ -95,7 +96,27 @@ test('subsections are checked only against the statute itself',()=>{
 test('a quotation must be in the cited source when the citation is sure',()=>{
   const memo=passage('m','Hartwell Licensing Guide',guide.passage_text);
   const check=checkCitation(claim('Hartwell Licensing Guide'),[oa,memo],verified('oa'));
-  assert.ok(check.codes.includes('QUOTE_IN_OTHER_SOURCE'));assert.ok(check.codes.includes('CITED_SOURCE_NOT_USED'));assert.equal(check.status,'MISCITED');
+  assert.deepEqual(check.codes,['QUOTE_IN_OTHER_SOURCE','CITED_SOURCE_NOT_USED']);assert.equal(check.status,'MISCITED');
+});
+
+test('an Office Action quoting the case a response cites is fine',()=>{
+  const words='the combination of familiar elements according to known methods is likely to be obvious';
+  const ksr=passage('ksr','KSR Intl v Teleflex opinion',`KSR v. Teleflex, 550 U.S. 398. ${words} when it does no more.`);
+  const action=passage('oa','Office Action.pdf',`As KSR said, ${words}.`);
+  const result={status:'VERIFIED',source_id:'oa',extracted_passage:words};
+  assert.deepEqual(checkCitation(plainClaim('KSR, 550 U.S. 398'),[ksr,action],result),clean);
+  const only=checkCitation(plainClaim('KSR, 550 U.S. 398'),[passage('ksr','KSR opinion','KSR v. Teleflex, 550 U.S. 398. Other words entirely.'),action],result);
+  assert.deepEqual(only.codes,['CITED_SOURCE_NOT_USED']);assert.equal(only.status,'UNVERIFIABLE');
+});
+
+test('page furniture and stray numbers inside a quotation are not a false alarm',()=>{
+  const cmecf=passage('b','Opinion',`The court held that the shall not be prior\nCase 1:19-cv-01234 Document 45 Filed 01/02/20 Page 8 of 30 PageID #: 1234\nart to the claimed invention at all.`);
+  assert.deepEqual(missingQuotes({assertion_text:'It says "shall not be prior art to the claimed invention".'},[cmecf]),[]);
+  const footnote=passage('f','Opinion','The inventor knew at the time of invention3 and addressed the problem directly.');
+  assert.deepEqual(missingQuotes({assertion_text:'It says "at the time of invention and addressed the problem".'},[footnote]),[]);
+  const transcript=passage('t','Deposition','2 A. Yes, we tested the device\n3 and it failed every time we ran it.');
+  assert.deepEqual(missingQuotes({assertion_text:'He said "we tested the device and it failed every time".'},[transcript]),[]);
+  assert.deepEqual(missingQuotes({assertion_text:'It says "the moon is made of green cheese today".'},[cmecf]),['the moon is made of green cheese today'],'a truly absent quotation is still caught');
 });
 
 test('a document named after the authority wins over one that lists it',()=>{
@@ -174,9 +195,13 @@ test('paragraph marks must start a line, and a mere reference is not one',()=>{
   assert.equal(pinHolds({kind:'paragraph',value:12},app,'widget has a lever').holds,true);
   assert.deepEqual(pinHolds({kind:'paragraph',value:11},app,'widget has a lever'),{holds:false,where:'paragraph 12'});
   assert.equal(pinHolds({kind:'paragraph',value:1},'no marks','x').holds,null);
+  assert.equal(pinHolds({kind:'paragraph',value:52},'[0044] Text. [0052] the widget has a lever arm','widget has a lever').holds,true,'a mark left in mid-line by two-column extraction');
+  assert.equal(pinHolds({kind:'paragraph',value:99},'[0044] the widget has a lever arm','widget has a lever').holds,null,'the cited paragraph is not there, so nothing can be said');
   const declaration='1. I am a witness.\n2. As alleged in Compl. ¶ 7, the widget has a lever arm.\n3. Done.';
   assert.equal(pinHolds({kind:'paragraph',value:3},declaration,'widget has a lever').holds,null);
   assert.equal(pinHolds({kind:'paragraph',value:14},'14. See [2019] EWCA Civ 12 where the widget has a lever arm.','widget has a lever').holds,null);
+  const text="The '001 patent discloses a lever.";
+  assert.equal(checkCitation(plainClaim("The '001 patent",text),[passage('o','Response',text)],{status:'VERIFIED',source_id:'o',extracted_passage:text}).status,null,'a source using only the short form');
   const deck='<!-- source_locator: slide:2 -->\nRevenue grew.\n<!-- source_locator: slide:3 -->\nOther.';
   assert.equal(pinHolds({kind:'slide',value:2},deck,'revenue grew').holds,true);
   assert.deepEqual(pinHolds({kind:'slide',value:3},deck,'revenue grew'),{holds:false,where:'slide 2'});
