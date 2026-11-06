@@ -78,7 +78,7 @@ Then set `ARTIFACT_PYTHON` in `.env` to that interpreter (for example `.venv/bin
 ### Quick start in the browser
 
 1. Create a project, then paste an article or import a file.
-2. **Extract claims**, review the claim ledger, and mark claims that need no outside evidence.
+2. **Extract claims** and read the claim ledger. Marking claims that need no outside evidence is done through the API (`assertions-review`).
 3. **Build corpus** (shows a query/cost estimate first). Verify stays disabled in the page until a sealed corpus exists. A source URL added by hand in the page is only registered: the page has no download button, so it stays unread until you call `POST /api/projects/{id}/sources/{source_id}/acquire` ([docs/API.md](docs/API.md)) and build the corpus or verify again.
 4. **Verify**, then open findings, read the quoted passages and download the original sources. Sources that could not be used appear in the Sources panel marked NOT USED.
 5. Export a report, or run **Fix draft** and verify the new version again.
@@ -136,8 +136,8 @@ Every status is a label on one claim, not a certification. Read the quoted passa
 
 | Status | Who decides | What it means |
 |---|---|---|
-| `VERIFIED` | Model, plus one mechanical test | A model judged a passage adequate for the claim, and its quotation appears verbatim in that passage. The test proves the quote exists, not that it supports the claim: a very short quote, even a single common word, passes it. |
-| `OVERSTATED`, `MISCITED`, `CONTRADICTED`, `STALE`, `FABRICATED` | Model only | The model's reading of the passages it was shown. Nothing in the code checks them: `STALE` has no freshness check behind it and `FABRICATED` has no lookup behind it. |
+| `VERIFIED` | Model, plus mechanical tests | A model judged a passage adequate for the claim. Code checks that the passage it quotes appears verbatim in that passage and is at least 8 words or 40 characters long, and that any quotation in the claim appears in a qualifying source. These tests prove the words exist, not that they support the claim. |
+| `OVERSTATED`, `MISCITED`, `CONTRADICTED`, `STALE`, `FABRICATED` | Model, with one exception | The model's reading of the passages it was shown: `STALE` has no freshness check behind it and `FABRICATED` has no lookup behind it. The exception: when a quotation of 5 or more words in the claim is in no qualifying source, ignoring case, spacing and punctuation, code changes a model's `VERIFIED` to `MISCITED` and records `QUOTE_NOT_IN_SOURCES`. A shorter quoted phrase is noted only, because it may be a defined term. The check sees only quotations in claims the model extracted, and a citation itself is not checked by code. |
 | `UNSUPPORTED` | Model | The model examined the retrieved passages and found no support. The gap says how many it saw, for example "Not found in the 3 passages retrieved". Only the best word matches are retrieved, so support elsewhere in a source may not have been seen. |
 | `UNVERIFIABLE` | Code or model | Usually nothing was compared: `not_checked_reason` says why, and the gap begins "Nothing was checked". It says nothing about whether the claim is true. See below. |
 | `NOT_APPLICABLE` | Code, from a model's or person's flag | The claim is marked as needing no outside source. It was not checked and is not verified. |

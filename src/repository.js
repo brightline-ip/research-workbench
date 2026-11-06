@@ -191,6 +191,8 @@ export class Repository {
 
   async registerSource(projectId, input) {
     const canonicalUrl = canonicalizeUrl(input.canonical_url);
+    if (new URL(canonicalUrl).hostname.endsWith('.invalid')) throw Object.assign(new Error('A reserved address cannot be registered as a source'), { statusCode: 400, publicMessage: 'A reserved address cannot be registered as a source' });
+    if (new URL(canonicalUrl).hostname.endsWith('.invalid')) throw Object.assign(new Error('A reserved address cannot be registered as a source'), { statusCode: 400, publicMessage: 'A reserved address cannot be registered as a source' });
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');

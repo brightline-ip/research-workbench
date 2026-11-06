@@ -63,24 +63,29 @@ export function rankPassages(assertionText, passages, limit = 5) {
 export const MIN_VERIFIED_QUOTE_WORDS=8, MIN_VERIFIED_QUOTE_CHARS=40;
 const longEnoughQuote=text=>text.trim().length>=MIN_VERIFIED_QUOTE_CHARS||text.trim().split(/\s+/).length>=MIN_VERIFIED_QUOTE_WORDS;
 
-const quoteForm=text=>text.replace(/[\u201c\u201d\u201e\u00ab\u00bb]/g,'"').replace(/[\u2018\u2019]/g,"'").replace(/[\u2010-\u2015]/g,'-').replace(/\s+/g,' ');
+const quoteForm=text=>text.replace(/[\u201c\u201d\u201e\u00ab\u00bb]/g,'"').replace(/\s+/g,' ');
+// Letters and digits only: spacing, punctuation, line-break hyphens, ligatures and where a passage was cut say nothing about the words.
+const wordsOnly=text=>text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
+// Shorter quoted phrases are as often defined terms or scare quotes as quotations, so they are noted but do not overturn a result.
+export const QUOTE_WORDS_TO_OVERTURN=5;
+export const overturnsResult=piece=>piece.split(' ').length>=QUOTE_WORDS_TO_OVERTURN;
 // The word-for-word parts of what a claim puts in quotation marks. Ellipses and bracketed changes split a quotation.
 export function quotedPieces(text){
   const pieces=[];
   for(const [,quoted] of quoteForm(text||'').matchAll(/"([^"]+)"/g))for(const piece of quoted.split(/\.\.\.|\u2026|\[[^\]]*\]/)){
-    const clean=piece.trim().replace(/[.,;:]+$/,'').toLowerCase();
+    const clean=piece.trim().replace(/[.,;:]+$/,'');
     if(clean.split(' ').length>=3)pieces.push(clean);
   }
   return [...new Set(pieces)];
 }
 // Checked in code, not by a model: quotations a claim makes that appear in none of these sources, compared whole so a passage boundary cannot hide one.
-export function missingQuotes(assertion,passages){
+// `prepared` keeps each source's prepared text between claims in a run; a source can be every file a user named.
+export function missingQuotes(assertion,passages,prepared=new Map()){
   const pieces=quotedPieces(`${assertion.evidence_span||''} ${assertion.assertion_text||''}`);
   if(!pieces.length)return [];
-  const bySource=new Map();
-  for(const p of [...passages].sort((a,b)=>a.sequence_number-b.sequence_number))bySource.set(p.source_id,`${bySource.get(p.source_id)||''} ${p.passage_text}`);
-  const texts=[...bySource.values()].map(text=>quoteForm(text).toLowerCase());
-  return pieces.filter(piece=>!texts.some(text=>text.includes(piece)));
+  const sources=new Set(passages.map(p=>p.source_id));
+  for(const id of sources)if(!prepared.has(id))prepared.set(id,wordsOnly(passages.filter(p=>p.source_id===id).sort((a,b)=>a.sequence_number-b.sequence_number).map(p=>p.passage_text).join('')));
+  return pieces.filter(piece=>![...sources].some(id=>prepared.get(id).includes(wordsOnly(piece))));
 }
 
 export function validateVerificationEvidence(result, candidates) {
