@@ -10,6 +10,7 @@
 - `corpus-import` takes `local_source` for a file with no web address. Web discovery never reuses such a file.
 - A provider rejection records the provider's error code (for example `HTTP 429: credit_balance_exhausted`), never its message.
 - HTML sources decode more entities, including section signs and curly quotes.
+- Code checks citations against the run's sources: the cited authority is present, a quotation is in the source cited, the support comes from it, and a page, slide, paragraph or subsection pin holds. A pin it cannot check is recorded as such.
 - You can decide what happens to each claim needing attention: your own claim, mark as needing evidence, or remove. The page has a control on each claim, and the API takes `author-claims` and `claim_decisions`. Migration 017.
 - A web search is skipped for a claim when a recent stored primary source covers it, so stored sources now save paid searches. The run says when this happened.
 

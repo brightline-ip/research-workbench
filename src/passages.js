@@ -65,7 +65,7 @@ const longEnoughQuote=text=>text.trim().length>=MIN_VERIFIED_QUOTE_CHARS||text.t
 
 const quoteForm=text=>text.replace(/[\u201c\u201d\u201e\u00ab\u00bb]/g,'"').replace(/\s+/g,' ');
 // Letters and digits only: spacing, punctuation, line-break hyphens, ligatures and where a passage was cut say nothing about the words.
-const wordsOnly=text=>text.normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
+export const wordsOnly=text=>String(text||'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
 // Shorter quoted phrases are as often defined terms or scare quotes as quotations, so they are noted but do not overturn a result.
 export const QUOTE_WORDS_TO_OVERTURN=5;
 export const overturnsResult=piece=>piece.split(' ').length>=QUOTE_WORDS_TO_OVERTURN;

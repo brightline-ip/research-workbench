@@ -182,7 +182,7 @@ export class Repository {
           const { rows: [saved] } = await client.query(`INSERT INTO assertions(project_id,article_version_id,extraction_run_id,block_index,start_offset,end_offset,evidence_span,assertion_text,normalized_proposition,assertion_class,load_bearing,load_bearing_reason,citation_as_written,source_required,primary_source_required,assertion_fingerprint)
             VALUES (${values.map((_, i) => `$${i + 1}`).join(',')}) RETURNING *`, values);
           // The author said earlier that this exact statement is their own claim, so it is not looked up again.
-          const { rows: [own] } = await client.query(`UPDATE assertions SET source_required=false,primary_source_required=false,verification_scope='EXCLUDED',scope_reason=(SELECT reason FROM author_claims WHERE project_id=$1 AND claim_hash=$3),reviewed_at=now() WHERE assertion_id=$2 AND EXISTS(SELECT 1 FROM author_claims WHERE project_id=$1 AND claim_hash=$3) RETURNING *`, [projectId, saved.assertion_id, authorClaimHash(item.evidence_span)]);
+          const { rows: [own] } = await client.query(`UPDATE assertions SET source_required=false,primary_source_required=false,verification_scope='EXCLUDED',scope_reason=(SELECT reason FROM author_claims WHERE project_id=$1 AND claim_hash=$3),reviewed_at=now() WHERE assertion_id=$2 AND EXISTS(SELECT 1 FROM author_claims WHERE project_id=$1 AND claim_hash=$3) RETURNING *`, [projectId, saved.assertion_id, authorClaimHash(item.evidence_span||item.assertion_text)]);
           assertions.push(own || saved);
         }
         const { rows: [completed] } = await client.query(`UPDATE assertion_extraction_runs SET status='COMPLETE',coverage_complete=$2,coverage_notes=$3,assertion_count=$4,provider_response_id=$5,completed_at=now() WHERE extraction_run_id=$1 RETURNING *`, [run.extraction_run_id, extraction.coverage_complete, extraction.coverage_notes, assertions.length, extraction.provider_response_id || null]);
@@ -258,6 +258,12 @@ export class Repository {
     return {recorded:rows.length};
   }
 
+  async removeAuthorClaims(projectId,articleVersionId,assertionIds){
+    const {rows}=await this.pool.query('SELECT evidence_span,assertion_text FROM assertions WHERE project_id=$1 AND article_version_id=$2 AND assertion_id=ANY($3::uuid[])',[projectId,articleVersionId,assertionIds]);
+    const {rowCount}=await this.pool.query('DELETE FROM author_claims WHERE project_id=$1 AND claim_hash=ANY($2::text[])',[projectId,rows.map(row=>authorClaimHash(row.evidence_span||row.assertion_text))]);
+    return {removed:rowCount};
+  }
+
   async importCorpusSource(projectId,input){
     const canonicalUrl=canonicalizeUrl(input.canonical_url),client=await this.pool.connect();
     const validTypes=new Set(['STATUTE','REGULATION','JUDICIAL_OPINION','AGENCY_DOCUMENT','GOVERNMENT_DATASET','PATENT','SEC_FILING','ACADEMIC','NEWS','WEB_PAGE','OTHER']);
@@ -265,13 +271,13 @@ export class Repository {
     try{await client.query('BEGIN');
       const {rows:[found]}=await client.query('SELECT * FROM sources WHERE content_hash=$1 OR canonical_url=$2 ORDER BY (content_hash IS NOT DISTINCT FROM $1) DESC LIMIT 1 FOR UPDATE',[input.content_hash,canonicalUrl]);
       let source;
-      if(found){({rows:[source]}=await client.query(`UPDATE sources SET title=COALESCE($2,title),source_type=$3,issuing_authority=COALESCE($4,issuing_authority),jurisdiction=COALESCE($5,jurisdiction),publication_date=COALESCE($6,publication_date),version_label=COALESCE($7,version_label),canonical_identity=COALESCE($8,canonical_identity),retrieval_status=$9,retrieved_at=now(),final_url=$10,media_type=$11,byte_length=$12,content_hash=$13,original_storage_path=$14,normalized_storage_path=$15,provenance=$16,updated_at=now() WHERE source_id=$1 RETURNING *`,[found.source_id,input.title||null,validTypes.has(input.source_type)?input.source_type:'OTHER',input.issuing_authority||null,input.jurisdiction||null,input.publication_date||null,input.version_label||null,input.content_hash,input.retrieval_status,canonicalUrl,input.media_type,input.byte_length,input.content_hash,input.original_storage_path,input.normalized_storage_path,input.provenance]))}
+      if(found){({rows:[source]}=await client.query(`UPDATE sources SET title=COALESCE(title,$2),source_type=CASE WHEN $3='OTHER' THEN source_type ELSE $3 END,issuing_authority=COALESCE($4,issuing_authority),jurisdiction=COALESCE($5,jurisdiction),publication_date=COALESCE($6,publication_date),version_label=COALESCE($7,version_label),canonical_identity=COALESCE($8,canonical_identity),retrieval_status=$9,retrieved_at=COALESCE(retrieved_at,now()),final_url=$10,media_type=$11,byte_length=$12,content_hash=$13,original_storage_path=$14,normalized_storage_path=$15,provenance=COALESCE(provenance,'{}'::jsonb)||$16::jsonb,updated_at=now() WHERE source_id=$1 RETURNING *`,[found.source_id,input.title||null,validTypes.has(input.source_type)?input.source_type:'OTHER',input.issuing_authority||null,input.jurisdiction||null,input.publication_date||null,input.version_label||null,input.content_hash,input.retrieval_status,canonicalUrl,input.media_type,input.byte_length,input.content_hash,input.original_storage_path,input.normalized_storage_path,input.provenance]))}
       else {({rows:[source]}=await client.query(`INSERT INTO sources(canonical_url,title,source_type,issuing_authority,jurisdiction,publication_date,version_label,canonical_identity,retrieval_status,retrieved_at,final_url,media_type,byte_length,content_hash,original_storage_path,normalized_storage_path,provenance) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,now(),$1,$10,$11,$12,$13,$14,$15) RETURNING *`,[canonicalUrl,input.title||null,validTypes.has(input.source_type)?input.source_type:'OTHER',input.issuing_authority||null,input.jurisdiction||null,input.publication_date||null,input.version_label||null,input.content_hash,input.retrieval_status,input.media_type,input.byte_length,input.content_hash,input.original_storage_path,input.normalized_storage_path,input.provenance]))}
       if(input.authority_tier)({rows:[source]}=await client.query('UPDATE sources SET authority_tier=$2,canonical_url=CASE WHEN canonical_url LIKE $3 THEN $4 ELSE canonical_url END WHERE source_id=$1 RETURNING *',[source.source_id,input.authority_tier,`${LOCAL_SOURCE_PREFIX}%`,canonicalUrl]));
       await client.query("INSERT INTO project_sources(project_id,source_id,membership_status) VALUES($1,$2,'ACCEPTED') ON CONFLICT(project_id,source_id) DO UPDATE SET membership_status='ACCEPTED'",[projectId,source.source_id]);
       for(const link of input.assertion_links){if(!validRelationships.has(link.relationship_type)||!validClasses.has(link.proposition_source_class)||!link.classification_reason?.trim())throw Object.assign(new Error('Invalid assertion link classification'),{statusCode:400});const result=await client.query(`INSERT INTO assertion_source_relationships(assertion_id,source_id,relationship_type,proposition_source_class,classification_reason,discovery_only,class_assigned_by)
-        SELECT assertion_id,$2,$3,$4,$5,false,'CALLER' FROM assertions WHERE assertion_id=$1 AND project_id=$6
-        ON CONFLICT(assertion_id,source_id,relationship_type) DO UPDATE SET proposition_source_class=EXCLUDED.proposition_source_class,classification_reason=EXCLUDED.classification_reason,discovery_only=false,class_assigned_by='CALLER'`,[link.assertion_id,source.source_id,link.relationship_type,link.proposition_source_class,link.classification_reason.trim(),projectId]);if(!result.rowCount)throw Object.assign(new Error('assertion link does not belong to project'),{statusCode:404})}
+        SELECT assertion_id,$2,$3,$4,$5,false,$7 FROM assertions WHERE assertion_id=$1 AND project_id=$6
+        ON CONFLICT(assertion_id,source_id,relationship_type) DO UPDATE SET proposition_source_class=EXCLUDED.proposition_source_class,classification_reason=EXCLUDED.classification_reason,discovery_only=false,class_assigned_by=EXCLUDED.class_assigned_by`,[link.assertion_id,source.source_id,link.relationship_type,link.proposition_source_class,link.classification_reason.trim(),projectId,['MODEL','DEFAULT'].includes(link.class_assigned_by)?link.class_assigned_by:'CALLER']);if(!result.rowCount)throw Object.assign(new Error('assertion link does not belong to project'),{statusCode:404})}
       await client.query('COMMIT');return {source,linked_assertions:input.assertion_links.length};
     }catch(error){await client.query('ROLLBACK').catch(()=>{});throw error}finally{client.release()}
   }
@@ -333,7 +339,11 @@ export class Repository {
     const {rows:results}=await this.pool.query(`SELECT vr.*,COALESCE(sv.metadata->>'canonical_url',s.canonical_url) AS canonical_url,COALESCE(sv.metadata->>'title',s.title) AS source_title
       FROM verification_results vr LEFT JOIN sources s USING(source_id) LEFT JOIN evidence_passages ep USING(evidence_passage_id) LEFT JOIN source_versions sv ON sv.source_version_id=ep.source_version_id WHERE verification_run_id=$1 ORDER BY vr.created_at`,[verificationRunId]);
     const {rows:assertions}=await this.pool.query('SELECT * FROM assertions WHERE article_version_id=$1',[articleVersionId]);
-    const actionable=revisionFindings(assertions,results,claimDecisions);
+    // A statement the author called their own is theirs to keep, so Fix draft is not shown it.
+    const {rows:ownClaims}=await this.pool.query('SELECT claim_hash FROM author_claims WHERE project_id=$1',[projectId]);
+    const ownHashes=new Set(ownClaims.map(row=>row.claim_hash));
+    const ownIds=new Set(assertions.filter(a=>ownHashes.has(authorClaimHash(a.evidence_span||a.assertion_text))).map(a=>a.assertion_id));
+    const actionable=revisionFindings(assertions,results.filter(result=>!ownIds.has(result.assertion_id)),claimDecisions);
     if(!actionable.length)throw conflict('There are no actionable verification findings to fix. A claim where nothing was compared is a gap in the check, not a finding, so it is left as written.');
     let run;
     try {

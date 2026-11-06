@@ -30,7 +30,7 @@ export class DiscoveryService {
     const { rows: assertions } = await this.pool.query('SELECT * FROM assertions WHERE project_id=$1 AND article_version_id=$2 ORDER BY load_bearing DESC,start_offset', [projectId, articleVersionId]);
     if (!assertions.length) throw new Error('Extract assertions before discovery');
     const { rows: [run] } = await this.pool.query(`INSERT INTO discovery_runs(project_id,article_version_id,mode,policy,model_name,assertions_total) VALUES($1,$2,$3,$4,$5,$6) RETURNING *`, [projectId, articleVersionId,effectivePolicy.mode, effectivePolicy, this.model, assertions.length]);
-    let searched=0,warehouseCount=0,externalCount=0,acquiredCount=0,groupsTotal=0,answeredFromStore=0;const unresolved=[];
+    let searched=0,warehouseCount=0,externalCount=0,acquiredCount=0,groupsTotal=0;const answeredFromStore=[];const unresolved=[];
     try {
       for (const assertion of assertions.filter(requiresExternalEvidence)) {
         const warehouse = effectivePolicy.warehouse_first ? await this.warehouseCandidates(assertion) : [];
@@ -39,7 +39,7 @@ export class DiscoveryService {
           warehouseCount++;
           await this.acceptExisting(run.discovery_run_id, assertion, source);
         }
-        if (await this.storedPrimaryCovers(assertion, warehouse, effectivePolicy.reuse_max_age_days)) answeredFromStore++;
+        if (await this.storedPrimaryCovers(assertion, warehouse, effectivePolicy.reuse_max_age_days)) answeredFromStore.push(assertion.assertion_id);
         else unresolved.push(assertion);
         await this.pool.query('UPDATE discovery_runs SET assertions_searched=assertions_searched+1 WHERE discovery_run_id=$1', [run.discovery_run_id]);
       }
@@ -52,8 +52,8 @@ export class DiscoveryService {
       }
       const snapshot = await this.sealSnapshot(projectId, articleVersionId, run.discovery_run_id, effectivePolicy);
       const source_failures = readableDiscoveryFailures((await this.pool.query(DISCOVERY_FAILURES_SQL,[run.discovery_run_id])).rows);
-      const notes=[`Sealed corpus snapshot ${snapshot.corpus_snapshot_id} with ${snapshot.source_count} exact source versions.`,source_failures.length&&`${source_failures.length} discovered sources could not be used; see source_failures.`,answeredFromStore&&`${answeredFromStore} claims used a stored primary source no older than ${effectivePolicy.reuse_max_age_days} days and were not searched on the web, so a newer source would not have been found.`,groupsTotal>searched&&`${groupsTotal-searched} of ${groupsTotal} claim groups were not searched because of max_external_queries.`].filter(Boolean).join(' ');
-      const { rows: [completed] } = await this.pool.query(`UPDATE discovery_runs SET status='COMPLETE',warehouse_candidates=$2,external_candidates=$3,primary_sources_acquired=$4,coverage_notes=$5,source_failures=$6,completed_at=now() WHERE discovery_run_id=$1 RETURNING *`, [run.discovery_run_id, warehouseCount, externalCount, acquiredCount, notes, source_failures.length]);
+      const notes=[`Sealed corpus snapshot ${snapshot.corpus_snapshot_id} with ${snapshot.source_count} exact source versions.`,source_failures.length&&`${source_failures.length} discovered sources could not be used; see source_failures.`,answeredFromStore.length&&`${answeredFromStore.length} claims used a stored primary source fetched within ${effectivePolicy.reuse_max_age_days} days and were not searched on the web, so a newer or better source would not have been found.`,groupsTotal>searched&&`${groupsTotal-searched} of ${groupsTotal} claim groups were not searched because of max_external_queries.`].filter(Boolean).join(' ');
+      const { rows: [completed] } = await this.pool.query(`UPDATE discovery_runs SET status='COMPLETE',warehouse_candidates=$2,external_candidates=$3,primary_sources_acquired=$4,coverage_notes=$5,source_failures=$6,policy=policy||$7::jsonb,completed_at=now() WHERE discovery_run_id=$1 RETURNING *`, [run.discovery_run_id, warehouseCount, externalCount, acquiredCount, notes, source_failures.length, { answered_from_store: answeredFromStore }]);
       return { run: completed, snapshot, source_failures };
     } catch (error) {
       await this.pool.query(`UPDATE discovery_runs SET status='FAILED',error_message=$2,completed_at=now() WHERE discovery_run_id=$1`, [run.discovery_run_id, error.message]).catch(()=>{});

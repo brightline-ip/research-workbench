@@ -226,7 +226,7 @@ only, size/time limited) and returns `201`.
 
 `POST /api/projects/{id}/revise` takes optional `claim_decisions`: `[{"assertion_id": "...", "decision": "REMOVE"}]` or `"NEEDS_EVIDENCE"`. A claim where nothing was compared is included only if it has a decision. If the model's reply does not follow a decision, or a removed claim's words are still in the draft, no revision is applied (`409`).
 
-`POST /api/projects/{id}/discover` takes `policy.reuse_max_age_days` (default 90; 0 turns it off): a web search is skipped for a claim when a stored primary source no older than that has one passage holding at least 60% of the claim's words. The run's `coverage_notes` says how many claims this affected.
+`POST /api/projects/{id}/discover` takes `policy.reuse_max_age_days` (default 90; 0 turns it off): a web search is skipped for a claim when a stored primary source fetched within that time has one passage holding at least 60% of the claim's words. Linking a stored source again does not make it look newly fetched. The run's `coverage_notes` says how many claims this affected, and `policy.answered_from_store` lists them. Such a claim is compared only with what is stored, so a poor stored source can read as a finding.
 
 `POST /api/projects/{id}/normalize-sources` extracts text from stored PDFs that have none yet (no refetch).
 
@@ -240,7 +240,7 @@ refused unless `allow_incomplete` is true. Returns `503` when Get Files is not c
 that nothing fetches, and web discovery never reuses it for another claim or project. With `"shared": true` as well, the user has chosen to keep the file: the address is
 `https://get-files.invalid/shared/<collection>/<document_id>` and web discovery may reuse it in later projects. `authority_tier` (`PRIMARY` or `SECONDARY`) records a label the caller chose for such reuse, shown as assigned by `CALLER`.
 
-`POST /api/projects/{id}/author-claims` with `{"article_version_id": "...", "assertion_ids": ["..."], "reason": "optional"}` records statements as the author's own claims. Later extractions in this project mark the same statement (same words, ignoring capitals and spacing) as needing no source, with `verification_scope` `EXCLUDED`. Results already saved do not change.
+`POST /api/projects/{id}/author-claims` with `{"article_version_id": "...", "assertion_ids": ["..."], "reason": "optional"}` records statements as the author's own claims. Later extractions in this project mark the same statement (same words, ignoring capitals and spacing) as needing no source, with `verification_scope` `EXCLUDED`. Results already saved do not change, and Fix draft is not shown such a claim. `"clear": true` takes the mark away again from the next extraction.
 
 `GET /api/projects/{id}/sources/{source_id}/original` and `.../normalized` download the stored original or
 normalized text as a sandboxed attachment.

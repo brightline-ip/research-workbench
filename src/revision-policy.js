@@ -25,7 +25,7 @@ export function ownerDecisionProblem(findings, output){
   const byResult=new Map(findings.map(f=>[f.verification_result_id,f]));
   for(const item of output.issue_resolutions){
     const finding=byResult.get(item.verification_result_id);
-    if(finding?.owner_decision==='REMOVE'&&(item.action!=='REMOVED'||output.content_markdown.includes(finding.original_excerpt)))return `The model did not remove "${String(finding.assertion_as_made||'').slice(0,120)}" as you asked. No revision was applied.`;
+    if(finding?.owner_decision==='REMOVE'&&(item.action!=='REMOVED'||output.content_markdown.includes(finding.original_excerpt)))return `"${String(finding.assertion_as_made||'').slice(0,120)}" was to be removed, but its words are still in the revised draft (the model kept them, or they appear elsewhere too). No revision was applied.`;
     if(finding?.owner_decision==='NEEDS_EVIDENCE'&&item.action!=='NEEDS_EVIDENCE')return `The model did not mark "${String(finding.assertion_as_made||'').slice(0,120)}" as needing evidence as you asked. No revision was applied.`;
   }
   return null;

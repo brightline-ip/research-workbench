@@ -106,4 +106,4 @@ mistakes in application code, not against a database owner, who can always drop 
 The Compose setup uses one database role that owns the schema and runs both migrations and the app. For
 tighter separation on your own PostgreSQL, run `npm run migrate` as the owning role and run the app as a
 second role with only `SELECT, INSERT, UPDATE, DELETE` on the tables (plus sequence usage). The readiness
-check reports missing privileges on `checkpoint_requests`.
+check reports missing privileges on `checkpoint_requests`. Grant the same on tables that later migrations add, such as `author_claims`.

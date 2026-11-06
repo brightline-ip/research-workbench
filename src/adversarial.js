@@ -26,12 +26,12 @@ export function currentComparisons(comparisons,assertions,results){
 
 export class AdversarialService{
  constructor(pool,{discoveryService,verificationService,orchestrator,modelName}){Object.assign(this,{pool,discoveryService,verificationService,orchestrator,modelName})}
- async run(projectId,articleVersionId,authorVerificationRunId){
+ async run(projectId,articleVersionId,authorVerificationRunId,options={}){
   const{rows:[authorRun]}=await this.pool.query(`SELECT * FROM verification_runs WHERE verification_run_id=$1 AND project_id=$2 AND article_version_id=$3 AND mode='AUTHOR_CORPUS' AND status='COMPLETE'`,[authorVerificationRunId,projectId,articleVersionId]);if(!authorRun)throw new Error('a completed author-corpus verification run is required');
   const{rows:[run]}=await this.pool.query(`INSERT INTO adversarial_runs(project_id,article_version_id,author_verification_run_id,model_name) VALUES($1,$2,$3,$4) RETURNING *`,[projectId,articleVersionId,authorVerificationRunId,this.modelName]);
   try{
    const{rows:authorUrls}=await this.pool.query(`SELECT DISTINCT s.canonical_url FROM verification_results vr JOIN sources s USING(source_id) WHERE vr.verification_run_id=$1`,[authorVerificationRunId]);
-   const discovery=await this.discoveryService.run(projectId,articleVersionId,{mode:'INDEPENDENT_DISCOVERY',warehouse_first:false,max_external_queries:1000,excluded_source_urls:authorUrls.map(r=>r.canonical_url)});
+   const discovery=await this.discoveryService.run(projectId,articleVersionId,{mode:'INDEPENDENT_DISCOVERY',warehouse_first:false,max_external_queries:Math.min(1000,Math.max(1,Number(options.max_external_queries)||1000)),excluded_source_urls:authorUrls.map(r=>r.canonical_url)});
    const independent=await this.verificationService.run(projectId,articleVersionId,'INDEPENDENT_DISCOVERY',{discoveryRunId:discovery.run.discovery_run_id});
    await this.pool.query(`UPDATE adversarial_runs SET independent_discovery_run_id=$2,independent_verification_run_id=$3 WHERE adversarial_run_id=$1`,[run.adversarial_run_id,discovery.run.discovery_run_id,independent.run.verification_run_id]);
    const context=await this.context(run.adversarial_run_id);

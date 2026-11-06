@@ -157,7 +157,7 @@ export function createHandler(repository, orchestrator, sourceServices = {}) {
         if(!sourceServices.discoveryService)return send(res,503,{error:'autonomous discovery is unavailable'});const body=await readJson(req);if(!body.article_version_id)return send(res,400,{error:'article_version_id is required'});return send(res,200,await sourceServices.discoveryService.estimate(match[1],body.article_version_id,body.policy||{}));
       }
       if(match&&req.method==='POST'&&match[2]==='adversarial'){
-        if(!sourceServices.adversarialService)return send(res,503,{error:'adversarial validation is unavailable'});const body=await readJson(req);if(body.adversarial_run_id)return send(res,201,await sourceServices.adversarialService.resume(match[1],body.adversarial_run_id));if(!body.article_version_id||!body.author_verification_run_id)return send(res,400,{error:'article_version_id and author_verification_run_id are required'});return send(res,201,await sourceServices.adversarialService.run(match[1],body.article_version_id,body.author_verification_run_id));
+        if(!sourceServices.adversarialService)return send(res,503,{error:'adversarial validation is unavailable'});const body=await readJson(req);if(body.adversarial_run_id)return send(res,201,await sourceServices.adversarialService.resume(match[1],body.adversarial_run_id));if(!body.article_version_id||!body.author_verification_run_id)return send(res,400,{error:'article_version_id and author_verification_run_id are required'});return send(res,201,await sourceServices.adversarialService.run(match[1],body.article_version_id,body.author_verification_run_id,{max_external_queries:body.max_external_queries}));
       }
       if(match&&req.method==='POST'&&match[2]==='revise'){
         const body=await readJson(req);if(!body.article_version_id||!body.verification_run_id)return send(res,400,{error:'article_version_id and verification_run_id are required'});
@@ -168,6 +168,7 @@ export function createHandler(repository, orchestrator, sourceServices = {}) {
       if(match&&req.method==='POST'&&match[2]==='author-claims'){
         const body=await readJson(req);const ids=body.assertion_ids;
         if(!UUID.test(String(body.article_version_id))||!Array.isArray(ids)||!ids.length||ids.length>500||ids.some(id=>!UUID.test(String(id))))return send(res,400,{error:'article_version_id and 1 to 500 assertion_ids are required'});
+        if(body.clear===true)return send(res,200,await repository.removeAuthorClaims(match[1],body.article_version_id,ids));
         return send(res,201,await repository.addAuthorClaims(match[1],body.article_version_id,ids,String(body.reason||'The author said this is their own claim.').slice(0,500)));
       }
       if(match&&req.method==='POST'&&match[2]==='datasets'){

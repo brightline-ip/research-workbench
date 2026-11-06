@@ -23,8 +23,8 @@ test('a reply that ignores the author is not applied',()=>{
   const findings=revisionFindings(assertions,results,[{assertion_id:'a',decision:'REMOVE'},{assertion_id:'b',decision:'NEEDS_EVIDENCE'}]);
   const reply=(a,b,content)=>({content_markdown:content,issue_resolutions:[{verification_result_id:'ra',action:a},{verification_result_id:'rb',action:b},{verification_result_id:'rc',action:'QUALIFIED'}]});
   assert.equal(ownerDecisionProblem(findings,reply('REMOVED','NEEDS_EVIDENCE','Other text. [EVIDENCE NEEDED: x]')),null);
-  assert.match(ownerDecisionProblem(findings,reply('QUALIFIED','NEEDS_EVIDENCE','Other text.')),/did not remove/);
-  assert.match(ownerDecisionProblem(findings,reply('REMOVED','NEEDS_EVIDENCE','The sky is green. Other text.')),/did not remove/,'the words are still there, whatever the model reported');
+  assert.match(ownerDecisionProblem(findings,reply('QUALIFIED','NEEDS_EVIDENCE','Other text.')),/still in the revised draft/);
+  assert.match(ownerDecisionProblem(findings,reply('REMOVED','NEEDS_EVIDENCE','The sky is green. Other text.')),/still in the revised draft/,'the words are still there, whatever the model reported');
   assert.match(ownerDecisionProblem(findings,reply('REMOVED','QUALIFIED','Other text.')),/needing evidence/);
 });
 

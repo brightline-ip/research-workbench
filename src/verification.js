@@ -2,6 +2,7 @@ import { EvidenceStore, storedFailureReason } from './evidence-store.js';
 import { missingQuotes, overturnsResult, rankPassages, validateVerificationEvidence } from './passages.js';
 import { requiresExternalEvidence } from '../public/report-model.js';
 import { mapConcurrent } from './concurrency.js';
+import { checkCitation } from './citations.js';
 import { isPermanentProviderFailure } from './safety.js';
 
 const plural=(n,word)=>`${n} ${word}${n===1?'':'s'}`;
@@ -106,6 +107,11 @@ export class VerificationService {
       const missing=missingQuotes(assertion,[...new Map(primary.map(p=>[p.passage_id,p])).values()],evidence.preparedQuoteText??=new Map()); // a source linked twice must not read as its text twice
       // A fact the code can settle, so a model's VERIFIED does not stand against a full quotation that is not there.
       if(missing.length)result={...result,status:result.status==='VERIFIED'&&missing.some(overturnsResult)?'MISCITED':result.status,defect_codes:[...new Set([...(result.defect_codes||[]),'QUOTE_NOT_IN_SOURCES'])],material_gap:`Word-for-word check: ${missing.map(q=>`"${q}"`).join(', ')} was not found in the qualifying sources (ignoring case, spacing and punctuation). Compare by hand. ${result.material_gap||''}`.trim()};
+    }
+    if(candidates.length&&!result.not_checked_reason){
+      // Facts about the citation itself. Like the quotation check, they can take a VERIFIED away and never grant one.
+      const citation=checkCitation(assertion,primary,result);
+      if(citation.codes.length)result={...result,status:result.status==='VERIFIED'&&citation.overturn?'MISCITED':result.status,defect_codes:[...new Set([...(result.defect_codes||[]),...citation.codes])],material_gap:[...citation.notes,result.material_gap].filter(Boolean).join(' ')};
     }
     const passage = result.passage_id ? candidates.find(p => p.passage_id === result.passage_id) : null;
     return this.#saveResult(runId, assertion, result, passage, candidates);
