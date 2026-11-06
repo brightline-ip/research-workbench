@@ -192,7 +192,6 @@ export class Repository {
   async registerSource(projectId, input) {
     const canonicalUrl = canonicalizeUrl(input.canonical_url);
     if (new URL(canonicalUrl).hostname.endsWith('.invalid')) throw Object.assign(new Error('A reserved address cannot be registered as a source'), { statusCode: 400, publicMessage: 'A reserved address cannot be registered as a source' });
-    if (new URL(canonicalUrl).hostname.endsWith('.invalid')) throw Object.assign(new Error('A reserved address cannot be registered as a source'), { statusCode: 400, publicMessage: 'A reserved address cannot be registered as a source' });
     const client = await this.pool.connect();
     try {
       await client.query('BEGIN');
@@ -308,7 +307,7 @@ export class Repository {
   }
 
   async reviseArticle(projectId, articleVersionId, verificationRunId, instruction, orchestrator, modelName=null) {
-    const conflict=message=>Object.assign(new Error(message),{statusCode:409});
+    const conflict=message=>Object.assign(new Error(message),{statusCode:409,publicMessage:message});
     const {rows:[context]}=await this.pool.query(`SELECT av.*,vr.status AS verification_status,vr.mode AS verification_mode
       FROM article_versions av JOIN verification_runs vr ON vr.article_version_id=av.article_version_id
       WHERE av.project_id=$1 AND av.article_version_id=$2 AND vr.verification_run_id=$3 AND vr.project_id=$1`,[projectId,articleVersionId,verificationRunId]);

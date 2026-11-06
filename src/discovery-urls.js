@@ -20,7 +20,6 @@ export function sanitizeDiscoveredUrl(value, trustedHosts = DEFAULT_TRUSTED_HOST
   const url = new URL(String(value));
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Only credential-free HTTP(S) source URLs are allowed');
   if (url.hostname.toLowerCase().endsWith('.invalid')) throw new Error('A reserved address cannot be a source'); // and it could name a file a user chose for another project
-  if (url.hostname.toLowerCase().endsWith('.invalid')) throw new Error('A reserved address cannot be a source'); // and it could name a file a user chose for another project
   if (!isTrustedHost(url.hostname, trustedHosts)) { url.search = ''; url.hash = ''; }
   return url.toString();
 }

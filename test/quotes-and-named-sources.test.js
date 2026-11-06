@@ -21,7 +21,6 @@ test('VERIFIED needs a quote long enough to judge; other statuses may quote brie
 test('quotations are split at ellipses and brackets, and short phrases are not treated as quotations',()=>{
   assert.deepEqual(quotedPieces('The court said “the claim is plainly invalid ... under the statute as written.”'),['the claim is plainly invalid','under the statute as written']);
   assert.ok(overturnsResult('the claim is plainly invalid'));assert.ok(!overturnsResult('the Licensed Products'));
-  assert.ok(overturnsResult('the claim is plainly invalid'));assert.ok(!overturnsResult('the Licensed Products'));
   assert.deepEqual(quotedPieces('So-called "scare quotes" and 5" screens'),[]);
 });
 
@@ -31,17 +30,12 @@ test('a quotation is checked word for word across passages, ignoring typography,
   assert.deepEqual(missingQuotes({assertion_text:'It says "the ACT\'S FULL   term".'},passages),[]);
   assert.deepEqual(missingQuotes({assertion_text:'It says "until the end of thirty years".'},passages),['until the end of thirty years']);
   assert.deepEqual(missingQuotes({assertion_text:'"a well-known \ufb01eld of law"'},[passage('A well-\nknown fi'),{...passage('eld of law.',1)}]),[],'a word cut by a passage boundary or a line-break hyphen, and a ligature');
-  assert.deepEqual(missingQuotes({assertion_text:'"a well-known \ufb01eld of law"'},[passage('A well-\nknown fi'),{...passage('eld of law.',1)}]),[],'a word cut by a passage boundary or a line-break hyphen, and a ligature');
   assert.deepEqual(missingQuotes({assertion_text:'No quotation here.'},passages),[]);
 });
 
 test('a quotation is found only within one source, not across two',()=>{
   const passages=[passage('the first half',0,'a'),passage('of the sentence',1,'b')];
   assert.deepEqual(missingQuotes({assertion_text:'"the first half of the sentence"'},passages),['the first half of the sentence']);
-});
-
-test('a reserved address can never be a discovered source',()=>{
-  assert.throws(()=>sanitizeDiscoveredUrl(`${LOCAL_SOURCE_PREFIX}research/${'a'.repeat(64)}`),/reserved/);
 });
 
 test('a reserved address can never be a discovered source',()=>{
