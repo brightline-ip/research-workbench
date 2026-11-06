@@ -52,7 +52,7 @@ export class Repository {
         WHERE dr.project_id=$1 AND dr.mode<>'INDEPENDENT_DISCOVERY' AND av.version_number=(SELECT max(version_number) FROM article_versions WHERE project_id=$1)
         ORDER BY dr.created_at DESC LIMIT 1`, [projectId]),
       this.pool.query(`SELECT cs.* FROM corpus_snapshots cs JOIN article_versions av USING(article_version_id)
-        WHERE cs.project_id=$1 AND cs.corpus_snapshot_id NOT IN (SELECT corpus_snapshot_id FROM verification_runs WHERE project_id=$1 AND mode='INDEPENDENT_DISCOVERY' AND corpus_snapshot_id IS NOT NULL) AND av.version_number=(SELECT max(version_number) FROM article_versions WHERE project_id=$1)
+        WHERE cs.project_id=$1 AND COALESCE(cs.policy->>'mode','')<>'INDEPENDENT_DISCOVERY' AND av.version_number=(SELECT max(version_number) FROM article_versions WHERE project_id=$1)
         ORDER BY cs.created_at DESC LIMIT 1`, [projectId]),
       this.pool.query(`SELECT vr.* FROM verification_runs vr JOIN article_versions av USING(article_version_id)
         WHERE vr.project_id=$1 AND av.version_number=(SELECT max(version_number) FROM article_versions WHERE project_id=$1)

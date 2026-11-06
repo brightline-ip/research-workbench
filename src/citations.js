@@ -2,20 +2,22 @@
 // quotation in the source cited, and do the quoted words sit where the pin cite says? Nothing here looks an authority up in
 // the world or judges whether a passage supports a claim. A false alarm costs a lawyer's trust, so a check overturns a
 // VERIFIED only when it is sure, and otherwise says what it found and leaves the result alone.
-import { overturnsResult, quotedPieces, wordsOnly } from './passages.js';
+import { overturnsResult, quotedPieces, sourceWords, wordsOnly } from './passages.js';
 
-const HEAD_CHARS=2000,LABEL_CHARS=60,TEXT_CHARS=4000;
-const STOP_WORDS=new Set(['see','also','the','and','for','from','with','this','that','page','pages','para','paragraph','slide','section','note','supra','infra','ibid','cited','citing','quoting','decl','decls','depo','exhs','corp','opp\'n','resp','mem']);
+const HEAD_CHARS=2000,LABEL_CHARS=60;
+const STOP_WORDS=new Set(['see','also','the','and','for','from','with','this','that','page','pages','para','paragraph','slide','section','note','supra','infra','ibid','cited','citing','quoting','decl','decls','depo','exhs','corp','resp','mem']);
 // Words that name a kind of document. Alone they say nothing about which document is meant.
 const GENERIC_WORDS=new Set(['patent','application','publication','action','office','exhibit','declaration','response','reference','specification','document','report','brief','memo','memorandum','letter','file','draft','opinion','order','owner','court','guide','notes']);
-const PARTY_SUFFIX=/^(?:inc|corp|corporation|co|company|ltd|llc|llp|lp|plc|pharms|pharm|pharmaceuticals|techs|technologies|holdings|int'l|intl|the|et|al)$/;
+const PARTY_WORDS=/^(?:inc|corp|corporation|co|company|ltd|llc|llp|lp|plc|pharms|pharm|pharmaceuticals|techs|technologies|holdings|int'l|intl|the|of|et|al|bd|trs|univ|united|states|people|commonwealth|state)$/;
 const tokens=text=>(String(text||'').toLowerCase().match(/[\p{L}\p{N}]{4,}/gu)||[]).filter(word=>!STOP_WORDS.has(word)&&!/^\d+$/.test(word));
 const label=text=>{const clean=String(text).replace(/\s+/g,' ').trim();return clean.length>LABEL_CHARS?`${clean.slice(0,LABEL_CHARS)}…`:clean};
 const SUBSECTIONS=/\([a-zA-Z0-9]+\)/g;
+const REPORTERS=String.raw`(?:F\.\s?(?:2d|3d|4th)|F\.\s?Supp\.(?:\s?[23]d)?|S\.\s?Ct\.|U\.?S\.?P\.?Q\.?(?:2d)?)`;
 
+// The word most likely to identify a party. "Bd. of Trs. of Leland Stanford Jr. Univ." is found under "stanford".
 function party(words){
-  const parts=words.toLowerCase().split(/[\s,]+/).map(word=>word.replace(/[^\p{L}\p{N}'-]/gu,'')).filter(word=>word&&!PARTY_SUFFIX.test(word));
-  return parts[0]||null;
+  const parts=words.toLowerCase().split(/[\s,]+/).map(word=>word.replace(/[^\p{L}\p{N}'-]/gu,'')).filter(word=>word.length>=3&&!PARTY_WORDS.test(word));
+  return parts.sort((a,b)=>b.length-a.length)[0]||null;
 }
 
 // Authorities named precisely enough that their absence means something. Bare numbers are never authorities.
@@ -26,12 +28,19 @@ function authorities(source){
   each(/\bUS\s*(\d{1,2},?\d{3},?\d{3})\s*[AB]\d\b/gi,m=>ids.push({kind:'number',value:m[1].replaceAll(',',''),label:m[0]}));
   each(/\b(20\d{2})\/(\d{7})\b/g,m=>ids.push({kind:'number',value:m[1]+m[2],label:m[0]}));
   each(/['’](\d{3})\s+(?:patent|application|publication)\b/gi,m=>ids.push({kind:'short',value:m[1],label:m[0]}));
-  each(/\b\d{1,4}\s+(?:F\.\s?(?:2d|3d|4th)|F\.\s?Supp\.(?:\s?[23]d)?|S\.\s?Ct\.|U\.?S\.?P\.?Q\.?(?:2d)?)\s+\d{1,5}\b|\b\d{1,3}\s+U\.S\.\s+\d{1,4}\b/g,m=>ids.push({kind:'reporter',value:wordsOnly(m[0]),label:m[0]}));
+  each(new RegExp(String.raw`\b\d{1,4}\s+${REPORTERS}\s+\d{1,5}\b|\b\d{1,3}\s+U\.S\.\s+\d{1,4}\b`,'g'),m=>ids.push({kind:'reporter',value:wordsOnly(m[0]),label:m[0]}));
+  // "KSR, 550 U.S. at 416": the volume and reporter are what a short form gives.
+  each(new RegExp(String.raw`\b(\d{1,4}\s+${REPORTERS})\s+at\s+\d{1,5}\b|\b(\d{1,3}\s+U\.S\.)\s+at\s+\d{1,4}\b`,'g'),m=>ids.push({kind:'reporter',value:wordsOnly(m[1]||m[2]),label:m[0]}));
   each(/\b(\d{1,2})\s+(U\.?\s?S\.?\s?C\.?(?:\s?A\.?)?|C\.?\s?F\.?\s?R\.?)\s*(?:§+|sec(?:tion)?\.?)?\s*(\d+(?:\.\d+)?[a-z]*)/g,m=>ids.push({kind:'section',code:/c/i.test(m[2][0])?'cfr':'usc',title:m[1],value:m[3],label:m[0]}));
   each(/\bMPEP\s*(?:§+\s*)?(\d+(?:\.\d+)*)/gi,m=>ids.push({kind:'section',code:'mpep',value:m[1],label:m[0]}));
   each(/\bIn re\s+([A-Z][\w'&.-]+)/g,m=>{const a=party(m[1]);if(a)ids.push({kind:'case',parties:[a],label:m[0]})});
-  each(/\b([A-Z][\w'&.-]*(?:,?\s+(?:[A-Z][\w'&.-]*|of|the|&)){0,6}),?\s+v\.?s?\.?\s+([A-Z][\w'&.-]*(?:,?\s+[A-Z][\w'&.-]*){0,4})/g,m=>{const a=party(m[1]),b=party(m[2]);if(a&&b)ids.push({kind:'case',parties:[a,b],label:m[0]})});
+  each(/\b([A-Z][\w'&.-]*(?:,?\s+(?:[A-Z][\w'&.-]*|of|the|&)){0,8}),?\s+v\.\s+([A-Z][\w'&.-]*(?:,?\s+[A-Z][\w'&.-]*){0,4})/g,m=>{const names=[party(m[1]),party(m[2])].filter(Boolean);if(names.length)ids.push({kind:'case',parties:names,label:m[0]})});
   return ids;
+}
+
+function unique(ids){
+  const seen=new Set();
+  return ids.filter(id=>{const key=JSON.stringify([id.kind,id.value,id.parties,id.title]);if(seen.has(key))return false;seen.add(key);return true}).map(id=>({...id,label:label(id.label)}));
 }
 
 // Pin cites come only from the citation itself. Prose such as "heated at 150 degrees" is not a pin.
@@ -51,33 +60,32 @@ function pins(citation,ids){
 }
 
 export function parseCitation(citation,sentence=''){
-  const normalized=String(`${citation||''} ${sentence||''}`).normalize('NFKC');
-  const ids=authorities(normalized),seen=new Set();
-  const unique=ids.filter(id=>{const key=JSON.stringify([id.kind,id.value,id.parties,id.title]);if(seen.has(key))return false;seen.add(key);return true}).map(id=>({...id,label:label(id.label)}));
-  return {ids:unique,pins:pins(citation,unique)};
+  const cited=unique(authorities(String(citation||'').normalize('NFKC')));
+  const inSentence=unique(authorities(String(sentence||'').normalize('NFKC')));
+  return {ids:cited,sentenceIds:inSentence.filter(id=>!cited.some(other=>JSON.stringify([other.kind,other.value,other.parties])===JSON.stringify([id.kind,id.value,id.parties]))),pins:pins(citation,cited)};
 }
 
 function matchesSource(id,text){
-  const lower=text.toLowerCase();
-  if(id.kind==='case')return id.parties.every(name=>new RegExp(`(?<![\\p{L}\\p{N}])${name.replace(/[^\p{L}\p{N}'-]/gu,'')}(?![\\p{L}\\p{N}])`,'iu').test(lower));
-  if(id.kind==='short')return new RegExp(`\\d[\\d,]*${id.value}(?!\\d)`).test(text);
+  if(id.kind==='case')return id.parties.every(name=>new RegExp(`(?<![\\p{L}\\p{N}])${name.replace(/[^\p{L}\p{N}'-]/gu,'')}(?![\\p{L}\\p{N}])`,'iu').test(text));
+  if(id.kind==='short')return new RegExp(`\\d{1,2},?\\d{3},?${id.value}(?!\\d)`).test(text);
   if(id.kind==='section'){
     const number=id.value.replace('.','\\.');
-    if(id.code==='mpep')return lower.includes('mpep')&&new RegExp(`(?<![\\d.])${number}(?![\\d])`).test(text);
+    if(id.code==='mpep')return text.toLowerCase().includes('mpep')&&new RegExp(`(?<![\\d.])${number}(?![\\d])`).test(text);
     const code=id.code==='cfr'?'c\\.?\\s?f\\.?\\s?r\\.?':'u\\.?\\s?s\\.?\\s?c\\.?';
     return new RegExp(`§+\\s*${number}(?![\\d])|\\bsec(?:tion)?\\.?\\s*${number}(?![\\d])|${code}[^\\n]{0,24}?(?<![\\d.])${number}(?![\\d])|/t?${id.title||''}[^\\s]{0,8}s${number}(?![\\d])`,'i').test(text);
   }
   return wordsOnly(text).includes(id.value);
 }
 
-// Which qualifying sources a citation points to, and how sure that is.
+// Which qualifying sources the citation points to, and how sure that is. Only the citation itself decides: a sentence naming a
+// reference while citing the Office Action points at the Office Action.
 export function citedSources(parsed,citation,sources){
   if(parsed.ids.length){
     // A document named after the authority is the authority. Another document that merely lists it near the top is not.
     const byName=sources.filter(s=>parsed.ids.some(id=>matchesSource(id,`${s.title} ${s.url}`)));
     const cited=byName.length?byName:sources.filter(s=>parsed.ids.some(id=>matchesSource(id,s.head)));
-    const mentioned=cited.length?cited:sources.filter(s=>parsed.ids.some(id=>id.kind!=='short'&&matchesSource(id,s.text)));
-    return {named:true,sure:cited.length>0,cited,mentioned:mentioned.length>0};
+    const mentioned=cited.length>0||sources.some(s=>parsed.ids.some(id=>matchesSource(id,`${s.title} ${s.url} ${s.text}`)));
+    return {named:true,sure:cited.length>0,cited,mentioned};
   }
   const words=[...new Set(tokens(citation))];
   const distinctive=words.filter(word=>!GENERIC_WORDS.has(word));
@@ -90,10 +98,10 @@ export function citedSources(parsed,citation,sources){
 const LOCATOR=/<!--\s*(?:source_locator:\s*(page|slide):\s*|PDF (page) )(\d+)\s*-->/gi;
 function markedParts(text){
   const marks=[...text.matchAll(LOCATOR)];
-  return marks.map((mark,index)=>({kind:(mark[1]||mark[2]).toLowerCase(),number:Number(mark[3]),text:text.slice(mark.index+mark[0].length,marks[index+1]?.index??text.length)}));
+  // Extraction writes the next page's heading before its marker, so it is not the end of this page.
+  return marks.map((mark,index)=>({kind:(mark[1]||mark[2]).toLowerCase(),number:Number(mark[3]),text:text.slice(mark.index+mark[0].length,marks[index+1]?.index??text.length).replace(/\n##\s+(?:page|slide)\s+\d+\s*$/i,'\n')}));
 }
-// The page number printed on a page, when its first or last line is nothing else.
-function printedPage(text){
+function edgeNumber(text){
   const lines=text.split('\n').map(line=>line.trim()).filter(Boolean);
   for(const line of [lines.at(-1),lines[0]]){
     const match=/^(?:page\s+|pg\.?\s+|p\.\s*|-\s*)?(\d{1,4})(?:\s*-|\s+of\s+\d{1,4})?$/i.exec(line||'');
@@ -101,10 +109,22 @@ function printedPage(text){
   }
   return null;
 }
+// A printed page number is believed only when it is near the file's own count and the next or previous page agrees. A line
+// number from a pleading, a year or a table figure at the edge of a page does neither.
+const MAX_FRONT_MATTER=30;
+function printedPages(parts){
+  const edges=parts.map(part=>edgeNumber(part.text));
+  return parts.map((part,index)=>{
+    const value=edges[index];
+    if(value===null||part.number-value<0||part.number-value>MAX_FRONT_MATTER)return null;
+    const agrees=edges[index+1]===value+1&&parts[index+1].number===part.number+1||edges[index-1]===value-1&&parts[index-1].number===part.number-1;
+    return agrees?value:null;
+  });
+}
 
 // {holds:true} the pin holds; {holds:false} it does not, for certain; {holds:null,where} it could not be settled.
 export function pinHolds(pin,text,quote){
-  const has=segment=>wordsOnly(segment).includes(wordsOnly(quote));
+  const has=segment=>sourceWords(segment).includes(wordsOnly(quote));
   if(pin.kind==='page'||pin.kind==='slide'){
     if(!quote)return {holds:null};
     const parts=markedParts(text).filter(part=>part.kind===pin.kind);
@@ -115,19 +135,21 @@ export function pinHolds(pin,text,quote){
       return where?{holds:false,where:`slide ${where.number}`}:{holds:null};
     }
     // A quotation may run across a page break, so a page and its neighbour are read together too.
-    const whole=parts.filter(part=>has(part.text));
-    const located=whole.length?whole:parts.flatMap((part,index)=>parts[index+1]&&has(part.text+parts[index+1].text)?[part,parts[index+1]]:[]);
+    const printed=printedPages(parts);
+    const whole=parts.flatMap((part,index)=>has(part.text)?[index]:[]);
+    const located=whole.length?whole:parts.flatMap((part,index)=>parts[index+1]&&has(`${part.text}\n${parts[index+1].text}`)?[index,index+1]:[]);
     if(!located.length)return {holds:null};
     const inRange=number=>number>=pin.from&&number<=pin.to;
-    if(located.some(part=>{const printed=printedPage(part.text);return printed!==null&&inRange(printed)}))return {holds:true};
-    if(located.some(part=>printedPage(part.text)===null&&inRange(part.number)))return {holds:true};
-    const printed=located.map(part=>printedPage(part.text));
-    // Only a page's own printed number can show the pin is wrong: a PDF's page count differs after a cover sheet.
-    if(printed.every(number=>number!==null))return {holds:false,where:`printed page ${printed[0]}`};
-    return {holds:null,where:`page ${located[0].number} of the file`};
+    if(located.some(index=>printed[index]===null?inRange(parts[index].number):inRange(printed[index])))return {holds:true};
+    // A pin to the file's own page, where the page prints another number: possibly how the writer counted, so it is reported.
+    if(located.some(index=>inRange(parts[index].number)))return {holds:null,where:`page ${parts[located[0]].number} of the file, printed page ${printed[located[0]]}`};
+    // Only a page's believable printed number can show the pin is wrong: a file's count differs after a cover sheet.
+    if(located.every(index=>printed[index]!==null))return {holds:false,where:`printed page ${printed[located[0]]}`};
+    return {holds:null,where:`page ${parts[located[0]].number} of the file`};
   }
   if(pin.kind==='paragraph'){
-    const marks=[...text.matchAll(/\[(\d{4,5})\]|¶\s*(\d{1,5})/g)];
+    // A numbered paragraph starts a line. "Compl. ¶ 7" or "[2019] EWCA" in the middle of the text only refers to something.
+    const marks=[...text.matchAll(/^[ \t]*(?:\[(0\d{3,4})\]|¶\s*(\d{1,5}))/gm)];
     if(!marks.length||!quote)return {holds:null};
     const parts=marks.map((mark,index)=>({number:Number(mark[1]||mark[2]),text:text.slice(mark.index+mark[0].length,marks[index+1]?.index??text.length)}));
     if(parts.some(part=>part.number===pin.value&&has(part.text)))return {holds:true};
@@ -135,36 +157,43 @@ export function pinHolds(pin,text,quote){
     return where?{holds:false,where:`paragraph ${where.number}`}:{holds:null};
   }
   if(pin.kind==='subsection'){
-    const start=text.search(new RegExp(`(?:§+\\s*|\\bsec(?:tion)?\\.?\\s*|\\.\\s?[Cc]\\.?\\s*(?:§+\\s*)?)${pin.section.replace('.','\\.')}(?![\\d])|^\\s*${pin.section.replace('.','\\.')}\\.`,'m'));
+    const number=pin.section.replace('.','\\.');
+    const start=text.search(new RegExp(`(?:§+\\s*|\\bsec(?:tion)?\\.?\\s*|\\.\\s?[Cc]\\.?\\s*(?:§+\\s*)?)${number}(?![\\d])|^\\s*${number}\\.`,'m'));
     if(start<0)return {holds:null};
-    let at=start;const lower=text.toLowerCase();
-    for(const sub of pin.subs){at=lower.indexOf(sub,at);if(at<0)return {holds:false,where:null}}
+    let at=start;const compact=text.toLowerCase().replace(/\(\s+/g,'(').replace(/\s+\)/g,')');
+    for(const sub of pin.subs){at=compact.indexOf(sub,at);if(at<0)return {holds:false,where:null}}
     return {holds:true};
   }
   return {holds:null};
 }
 
 const NOTHING={codes:[],notes:[],status:null};
+const namedAfter=(section,s)=>new RegExp(`(?<![\\d.])${section.replace('.','\\.')}(?![\\d])`).test(`${s.title} ${s.url}`);
 
 // status: the status a VERIFIED should become, or null to leave it.
 export function checkCitation(assertion,passages,result,prepared=new Map()){
   const citation=assertion.citation_as_written||'';
   const sentence=assertion.evidence_span||assertion.assertion_text||'';
   const parsed=parseCitation(citation,sentence);
-  if(!citation&&!parsed.ids.length)return NOTHING;
+  if(!citation&&!parsed.sentenceIds.length)return NOTHING;
   const bySource=new Map();
   for(const p of [...passages].sort((a,b)=>a.sequence_number-b.sequence_number)){
     const entry=bySource.get(p.source_id)||{source_id:p.source_id,title:p.title||'',url:p.canonical_url||'',text:''};
     entry.text+=`${p.passage_text}\n`;bySource.set(p.source_id,entry);
   }
   const sources=[...bySource.values()].map(s=>({...s,head:`${s.title} ${s.url} ${s.text.slice(0,HEAD_CHARS)}`}));
-  const plain=s=>{if(!prepared.has(s.source_id))prepared.set(s.source_id,wordsOnly(s.text));return prepared.get(s.source_id)};
+  const plain=s=>{if(!prepared.has(s.source_id))prepared.set(s.source_id,sourceWords(s.text));return prepared.get(s.source_id)};
   const {named,sure,cited,mentioned}=citedSources(parsed,citation,sources);
   const codes=[],notes=[];let status=null;
-  if(named&&!mentioned){
-    const names=parsed.ids.map(id=>id.label).join(', ');
-    return {codes:['CITED_SOURCE_NOT_IN_SOURCES'],notes:[`Citation check: ${names} is not among this run's sources, so this citation could not be confirmed. That does not show it is wrong.`],status:'UNVERIFIABLE'};
-  }
+  const absent=ids=>{
+    const names=ids.map(id=>id.label).join(', ');
+    codes.push('CITED_SOURCE_NOT_IN_SOURCES');
+    notes.push(`Citation check: ${names} is not among this run's sources, so this citation could not be confirmed. That does not show it is wrong.`);
+  };
+  if(named&&!mentioned){absent(parsed.ids);return {codes,notes,status:'UNVERIFIABLE'}}
+  // A reference named in the sentence, when the citation itself points elsewhere, is reported at most.
+  const missing=parsed.sentenceIds.filter(id=>!sources.some(s=>matchesSource(id,`${s.title} ${s.url} ${s.text}`)));
+  if(missing.length){absent(missing);if(!citation)status='UNVERIFIABLE'}
   const pieces=quotedPieces(sentence);
   if(cited.length){
     const elsewhere=pieces.filter(piece=>!cited.some(s=>plain(s).includes(wordsOnly(piece)))&&sources.some(s=>plain(s).includes(wordsOnly(piece))));
@@ -183,17 +212,16 @@ export function checkCitation(assertion,passages,result,prepared=new Map()){
   const quote=pieces[0]||(scope.some(s=>s.source_id===result.source_id)?result.extracted_passage:null);
   const unchecked=[];
   for(const pin of parsed.pins){
-    const answers=pin.kind==='unchecked'?[]:scope.map(s=>pinHolds(pin,s.text,pin.kind==='subsection'?null:quote));
+    // Whether a subsection exists can be read only from the statute, not from a document that mentions it.
+    const among=pin.kind==='subsection'?scope.filter(s=>namedAfter(pin.section,s)):scope;
+    const answers=pin.kind==='unchecked'?[]:among.map(s=>pinHolds(pin,s.text,pin.kind==='subsection'?null:quote));
     if(answers.some(answer=>answer.holds===true))continue;
+    const where=answers.find(answer=>answer.where)?.where;
     if(answers.length&&answers.every(answer=>answer.holds===false)){
-      const where=answers.find(answer=>answer.where)?.where;
       codes.push('WRONG_PIN_CITE');
       notes.push(`Citation check: "${pin.label}" does not hold: ${where?`the words are at ${where}`:'that spot is not in the source'}.`);
       status='MISCITED';
-    }else{
-      const where=answers.find(answer=>answer.where)?.where;
-      unchecked.push(where?`"${pin.label}" (the words are on ${where}; printed page numbers may differ)`:`"${pin.label}"`);
-    }
+    }else unchecked.push(where?`"${pin.label}" (the words are on ${where}; printed page numbers may differ)`:`"${pin.label}"`);
   }
   if(unchecked.length){
     codes.push('PIN_NOT_CHECKED');

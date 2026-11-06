@@ -67,6 +67,8 @@ const quoteForm=text=>text.replace(/[\u201c\u201d\u201e\u00ab\u00bb]/g,'"').repl
 // Letters and digits only: spacing, punctuation, line-break hyphens, ligatures and where a passage was cut say nothing about the words.
 export const wordsOnly=text=>String(text||'').normalize('NFKC').toLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
 // Shorter quoted phrases are as often defined terms or scare quotes as quotations, so they are noted but do not overturn a result.
+// What extraction puts between a source's pages, and a page number alone on its line, are not words of the document, so a quotation can run across them.
+export const sourceWords=text=>wordsOnly(String(text||'').replace(/<!--[^>]*-->/g,' ').replace(/^##\s+(?:page|slide)\s+\d+\s*$/gim,' ').replace(/^\s*(?:page\s+)?\d{1,4}(?:\s+of\s+\d{1,4})?\s*$/gim,' '));
 export const QUOTE_WORDS_TO_OVERTURN=5;
 export const overturnsResult=piece=>piece.split(' ').length>=QUOTE_WORDS_TO_OVERTURN;
 // The word-for-word parts of what a claim puts in quotation marks. Ellipses and bracketed changes split a quotation.
@@ -84,7 +86,7 @@ export function missingQuotes(assertion,passages,prepared=new Map()){
   const pieces=quotedPieces(`${assertion.evidence_span||''} ${assertion.assertion_text||''}`);
   if(!pieces.length)return [];
   const sources=new Set(passages.map(p=>p.source_id));
-  for(const id of sources)if(!prepared.has(id))prepared.set(id,wordsOnly(passages.filter(p=>p.source_id===id).sort((a,b)=>a.sequence_number-b.sequence_number).map(p=>p.passage_text).join('')));
+  for(const id of sources)if(!prepared.has(id))prepared.set(id,sourceWords(passages.filter(p=>p.source_id===id).sort((a,b)=>a.sequence_number-b.sequence_number).map(p=>p.passage_text).join('\n')));
   return pieces.filter(piece=>![...sources].some(id=>prepared.get(id).includes(wordsOnly(piece))));
 }
 
