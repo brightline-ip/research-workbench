@@ -209,7 +209,7 @@ See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
 - Document extraction covers native text, DOCX tables, notes, headers and footers. Image-only PDF pages fail; scanned content, figures and layout need human review. No OCR.
 - Paywalled, login-protected or script-rendered sources usually cannot be acquired, and not every login page can be recognized (see [What each status means](#what-each-status-means)).
 - Usage limits count calls and bytes, not money. Timeouts stop new calls but cannot cancel work a provider already accepted.
-- No real model has been called in the publisher's testing of this commit: extraction, verification and discovery (web search through the Responses API) ran only against a fake provider. How accurate a real model is, and whether the default model names and strict schemas work on the live API, is unknown.
+- Real models were called only in two small end-to-end runs, through Document Verification: `gpt-5.4` for extraction and verification on a synthetic memo with web discovery, and on a synthetic office-action response against supplied files. The strict schemas and default model names worked on the live API in those runs. All other testing used a fake provider, and how accurate a real model is on real documents is unknown.
 - The Docker Compose setup and the Dockerfile were not built or run for this commit. An earlier commit's image was built and started during a suite installer test. The offline tests and a run against real PostgreSQL 16 with a fake provider were done for this commit (see CHANGELOG). The container harness (`scripts/test-checkpoint-postgres.mjs`) needs Docker and was not run.
 - One app process per database (enforced by an advisory lock).
 
