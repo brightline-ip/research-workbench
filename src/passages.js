@@ -75,6 +75,8 @@ export const prepareSource=text=>{const clean=withoutPageMarks(text);return {pla
 // missing quotation is looked for again, in order, allowing stray numbers and one or two short runs of other text.
 const HEADER_WORDS=40,MAX_INTERRUPTIONS=2;
 export function containsQuote(source,quote){
+  // A model's quote can carry the source's own page and paragraph marks, which are not words of the document.
+  quote=withoutPageMarks(quote).replace(/\[0\d{3,4}\]/g,' ');
   if(source.plain.includes(wordsOnly(quote)))return true;
   const wanted=wordTokens(quote),tokens=source.tokens;
   if(wanted.length<5)return false;

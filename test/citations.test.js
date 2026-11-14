@@ -197,6 +197,8 @@ test('paragraph marks must start a line, and a mere reference is not one',()=>{
   assert.equal(pinHolds({kind:'paragraph',value:1},'no marks','x').holds,null);
   assert.equal(pinHolds({kind:'paragraph',value:52},'[0044] Text. [0052] the widget has a lever arm','widget has a lever').holds,true,'a mark left in mid-line by two-column extraction');
   assert.equal(pinHolds({kind:'paragraph',value:99},'[0044] the widget has a lever arm','widget has a lever').holds,null,'the cited paragraph is not there, so nothing can be said');
+  const okafor='[0030] A hinge connects the housings.\n[0031] A damping spring is coupled to the hinge to reduce vibration during operation.\n[0032] Other.';
+  assert.equal(pinHolds({kind:'paragraph',value:31},okafor,'[0031] A damping spring is coupled to the hinge to reduce vibration during operation.').holds,true,'a real model quoted the paragraph mark with the words');
   const declaration='1. I am a witness.\n2. As alleged in Compl. ¶ 7, the widget has a lever arm.\n3. Done.';
   assert.equal(pinHolds({kind:'paragraph',value:3},declaration,'widget has a lever').holds,null);
   assert.equal(pinHolds({kind:'paragraph',value:14},'14. See [2019] EWCA Civ 12 where the widget has a lever arm.','widget has a lever').holds,null);
