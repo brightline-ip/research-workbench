@@ -1,6 +1,6 @@
 {
   "name": "research-verification-workbench",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Adversarial verification of written research: claim extraction, source discovery, passage-level verification, revision and reports.",
   "license": "PolyForm-Noncommercial-1.0.0",

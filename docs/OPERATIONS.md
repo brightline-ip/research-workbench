@@ -30,7 +30,7 @@ PostgreSQL 16 client tools (`pg_dump`, `pg_restore`, `psql`); `extras/backup/Doc
 a small image with them:
 
 ```sh
-docker build -f extras/backup/Dockerfile.operations -t research-workbench-ops:0.1.0 .
+docker build -f extras/backup/Dockerfile.operations -t research-workbench-ops:0.1.1 .
 ```
 
 Supply the connection through libpq variables (`PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, and

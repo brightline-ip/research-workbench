@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { assertDraftContract, assertExtractionContract, assertSourceClassificationContract, assertVerificationContract } from '../src/contracts.js';
+import { assertDraftContract, assertExtractionContract, assertSourceClassificationContract, assertVerificationContract, assertRedTeamContract, assertReconciliationContract } from '../src/contracts.js';
 import { createOrchestrator } from '../src/orchestrator.js';
 
 const valid = { research_brief: { topic: 'T', scope: 'S', research_questions: [], source_plan: [], limitations: [] }, article: { title: 'A', content_markdown: '# A' } };
@@ -41,4 +41,13 @@ test('verification contract enforces the canonical taxonomy and comparison field
   const value={source_id:null,passage_id:null,assertion_as_made:'A',source_actually_establishes:'Nothing acquired.',material_gap:'Evidence unavailable.',extracted_passage:null,status:'UNVERIFIABLE',defect_codes:[],confidence:null,recommended_remediation:'Acquire the source.'};
   assert.equal(assertVerificationContract(value),value);
   assert.throws(()=>assertVerificationContract({...value,status:'SUPPORTED'}),/status/);
+});
+test('red-team and reconciliation ids that are blank or "null" become null; an unknown real id is still refused', () => {
+  const ok='11111111-1111-4111-8111-111111111111';
+  const base={thesis_survives:'YES',executive_assessment:'x',findings:['','null',null,undefined,ok].map(id=>({assertion_id:id,finding_type:'THESIS_RISK',severity:'LOW',challenge:'c',evidence_basis:'e',recommended_action:'a'}))};
+  const out=assertRedTeamContract(base,[ok]);
+  assert.deepEqual(out.findings.map(f=>f.assertion_id),[null,null,null,null,ok]);
+  assert.throws(()=>assertRedTeamContract({...base,findings:[{...base.findings[0],assertion_id:'22222222-2222-4222-8222-222222222222'}]},[ok]),/unknown assertion/);
+  const rec=assertReconciliationContract({overall_disposition:'PUBLISHABLE',summary:'s',required_actions:[{assertion_id:'null',action:'a',reason:'r',requires_reverification:false},{assertion_id:ok,action:'a',reason:'r',requires_reverification:false}]},[ok]);
+  assert.deepEqual(rec.required_actions.map(a=>a.assertion_id),[null,ok]);
 });

@@ -32,7 +32,7 @@ services:
 
   app:
     build: .
-    image: research-workbench:0.1.0
+    image: research-workbench:0.1.1
     restart: unless-stopped
     depends_on:
       db:

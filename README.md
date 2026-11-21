@@ -1,6 +1,6 @@
 # Research Verification Workbench
 
-**Status: Public preview 0.1.0**
+**Status: Public preview 0.1.1**
 
 Research Verification Workbench checks a written article, memo or brief against its sources, claim by claim, before you rely on it. It is built for people who publish or file evidence-heavy writing, such as IP practitioners, analysts and researchers. It is adversarial: it assumes a claim is unproven until a quoted passage from an acquired source supports it.
 
@@ -224,7 +224,7 @@ The suite runs offline with no database, no network and no API key. Four XLSX/re
 
 ## Uninstall
 
-- Docker: `docker compose down` stops the app; `docker compose down -v` **also deletes the database and stored files**. Remove the image with `docker image rm research-workbench:0.1.0`.
+- Docker: `docker compose down` stops the app; `docker compose down -v` **also deletes the database and stored files**. Remove the image with `docker image rm research-workbench:0.1.1`.
 - Node: stop the process, drop the database (`DROP DATABASE research_workbench;`), delete the install folder, and delete `WORKBENCH_DATA_DIR` if you moved it elsewhere.
 - Revoke the OpenAI API key you created for this tool if you no longer need it.
 

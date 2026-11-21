@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 - 2026-11-20
+
+- Fixed: verification stopped with PostgreSQL error 22P02 when the model returned the text "null" (or an id it was not shown) as the passage or source id of a result that was not VERIFIED. Only ids of passages the model was given are kept; anything else is stored as empty. A VERIFIED result still needs a real passage.
+- Fixed: the same guard for the adversarial review. A red-team finding or reconciliation action whose claim id is blank or "null" is stored without a claim. An id for a claim that does not exist is still refused.
+- Tests: the readiness test no longer hard-codes the number of migrations.
+
 ## 0.1.0 (quotes and named sources) - 2026-11-06
 
 - A quotation in a claim is checked in code against the qualifying sources, ignoring case, spacing and punctuation. A quotation found in

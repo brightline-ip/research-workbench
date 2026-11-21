@@ -32,3 +32,11 @@ test('long paragraphs stay bounded and irregular whitespace keeps exact offsets'
   }
   assert.throws(()=>validateVerificationEvidence({status:'VERIFIED',source_id:'s',passage_id:'p',extracted_passage:' '},[{source_id:'s',passage_id:'p',passage_text:'a b'}]),/requires/);
 });
+test('a passage or source id the model was not shown (including the string "null") is stored as null', () => {
+  const c=[{source_id:'s',passage_id:'p',passage_text:'actual text'}];
+  const r=validateVerificationEvidence({status:'UNSUPPORTED',source_id:'null',passage_id:'null',extracted_passage:null},c);
+  assert.equal(r.passage_id,null); assert.equal(r.source_id,null);
+  const kept=validateVerificationEvidence({status:'UNSUPPORTED',source_id:'s',passage_id:'p',extracted_passage:null},c);
+  assert.equal(kept.passage_id,'p'); assert.equal(kept.source_id,'s');
+  assert.throws(()=>validateVerificationEvidence({status:'VERIFIED',source_id:'s',passage_id:'null',extracted_passage:'actual text'},c),/requires/);
+});

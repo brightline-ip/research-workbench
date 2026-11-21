@@ -116,6 +116,9 @@ export function missingQuotes(assertion,passages,prepared=new Map()){
 }
 
 export function validateVerificationEvidence(result, candidates) {
+  // A model can write "null" or an id it was not shown; neither may reach a uuid column. Only ids of passages it was given stand.
+  if (result.passage_id != null && !candidates.some(p => p.passage_id === result.passage_id)) result = { ...result, passage_id: null };
+  if (result.source_id != null && !candidates.some(p => p.source_id === result.source_id)) result = { ...result, source_id: null };
   if (result.status === 'VERIFIED' && (!result.source_id || !result.passage_id || !result.extracted_passage?.trim())) throw new Error('VERIFIED requires an acquired source passage');
   if (result.status === 'VERIFIED' && !longEnoughQuote(result.extracted_passage)) throw new Error('VERIFIED requires a quote long enough to judge');
   if (result.extracted_passage) {
